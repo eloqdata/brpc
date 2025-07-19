@@ -366,19 +366,10 @@ size_t RedisCommandParser::ParsedArgsSize() {
     return _args.size();
 }
 
-int find_crlf(const char* pfc, size_t length) {
-    for (size_t i = 0; i < length - 1; ++i) {
-        if (pfc[i] == '\r' && pfc[i + 1] == '\n') {
-            return i;
-        }
-    }
-    return -1;
-}
-
 ParseError RedisCommandParser::Consume(butil::IOBuf& buf,
                                        std::vector<butil::StringPiece>* args,
                                        butil::Arena* arena) {
-    const char* pfc = (const char*)buf.fetch1();
+    const auto pfc = static_cast<const char *>(buf.fetch1());
     if (pfc == NULL) {
         return PARSE_ERROR_NOT_ENOUGH_DATA;
     }
@@ -388,23 +379,24 @@ ParseError RedisCommandParser::Consume(butil::IOBuf& buf,
             return PARSE_ERROR_TRY_OTHERS;
         }
         const size_t buf_size = buf.size();
-        const auto copy_str = static_cast<char *>(arena->allocate(buf_size));
+        const auto copy_str = static_cast<char *>(arena->allocate(buf_size + 1));
         buf.copy_to(copy_str, buf_size);
         if (*copy_str == ' ') {
             return PARSE_ERROR_ABSOLUTELY_WRONG;
         }
-        const int crlf_pos = find_crlf(copy_str, buf_size);
-        if (crlf_pos == -1) {
+        copy_str[buf_size] = '\0';
+        const size_t crlf_pos = butil::StringPiece(copy_str, buf_size).find("\r\n");
+        if (crlf_pos == butil::StringPiece::npos) {  // not enough data
             return PARSE_ERROR_NOT_ENOUGH_DATA;
         }
         args->clear();
-        int offset = 0;
+        size_t offset = 0;
         while (offset < crlf_pos && copy_str[offset] != ' ') {
             ++offset;
         }
         const auto first_arg = static_cast<char*>(arena->allocate(offset));
         memcpy(first_arg, copy_str, offset);
-        for (int i = 0; i < offset; ++i) {
+        for (size_t i = 0; i < offset; ++i) {
             first_arg[i] = tolower(first_arg[i]);
         }
         args->push_back(butil::StringPiece(first_arg, offset));
@@ -413,7 +405,7 @@ ParseError RedisCommandParser::Consume(butil::IOBuf& buf,
             buf.pop_front(crlf_pos + 2);
             return PARSE_OK;
         }
-        int arg_start_pos = ++offset;
+        size_t arg_start_pos = ++offset;
 
         for (; offset < crlf_pos; ++offset) {
             if (copy_str[offset] != ' ') {
@@ -439,28 +431,6 @@ ParseError RedisCommandParser::Consume(butil::IOBuf& buf,
     }
     // '$' stands for bulk string "$<length>\r\n<string>\r\n"
     if (_parsing_array && *pfc != '$') {
-        // Check if the buffer equals "PING\r\n"
-        const size_t ping_cmd_len = 6; // Length of "PING\r\n"
-        if (buf.size() < ping_cmd_len) {
-            return PARSE_ERROR_ABSOLUTELY_WRONG;
-        }
-        // Peek at the first 6 bytes without consuming them
-        char cmd[6];
-        buf.copy_to(cmd, ping_cmd_len);
-        if (memcmp(cmd, "PING\r\n", ping_cmd_len) == 0) {
-            // Consume "PING\r\n" from the buffer
-            buf.pop_front(ping_cmd_len);
-            // Add "PING" to args
-            args->clear();
-            // Allocate memory from the arena for "PING"
-            char* arg = (char*)arena->allocate(4); // Length of "PING"
-            memcpy(arg, "ping", 4);
-            args->push_back(butil::StringPiece(arg, 4));
-            return PARSE_OK;
-        } else {
-            return PARSE_ERROR_ABSOLUTELY_WRONG;
-        }
-
         return PARSE_ERROR_ABSOLUTELY_WRONG;
     }
     char intbuf[32];  // enough for fc + 64-bit decimal + \r\n
