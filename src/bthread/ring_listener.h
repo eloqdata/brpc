@@ -90,7 +90,7 @@ struct SocketRegisterData {
 struct SocketUnRegisterData {
     int fd_;
     int32_t fd_idx_;
-    Socket *socket_ptr_{nullptr};
+    brpc::Socket *socket_ptr_{nullptr};
     bthread::Mutex mutex_;
     bthread::ConditionVariable cv_;
     bool finish_{false};
