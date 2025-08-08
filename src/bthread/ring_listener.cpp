@@ -490,7 +490,7 @@ int RingListener::SubmitCancel(SocketUnRegisterData *unregister_data) {
     brpc::Socket *socket_ptr = unregister_data->socket_ptr_;
     uint64_t vr_before = socket_ptr->_versioned_ref.load(std::memory_order_relaxed);
     LOG(INFO) << "[SubmitCancel before] nref="
-              << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)socket_ptr;
+              << brpc::NRefOfVRef(vr_before) <<",version=" << brpc::VersionOfVRef(vr_before)<< ", sock " << (void *)socket_ptr;
     if (socket_ptr != nullptr) {
         brpc::SocketUniquePtr hold;
         unregister_data->socket_ptr_->ReAddress(&hold);
@@ -498,7 +498,7 @@ int RingListener::SubmitCancel(SocketUnRegisterData *unregister_data) {
     }
     uint64_t vr_after = socket_ptr->_versioned_ref.load(std::memory_order_relaxed);
     LOG(INFO) << "[SubmitCancel after] nref="
-              << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)socket_ptr;
+              << brpc::NRefOfVRef(vr_after) <<",version=" << brpc::VersionOfVRef(vr_after)<< ", sock " << (void *)socket_ptr;
     int sfd;
     uint64_t data = reinterpret_cast<uint64_t>(unregister_data);
     data <<= 16;
@@ -546,7 +546,7 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
             }
             uint64_t vr_after = unregister_data->socket_ptr_->_versioned_ref.load(std::memory_order_relaxed);
             LOG(INFO) << "[HandleCqe] nref="
-                      << brpc::NRefOfVRef(vr_after) << "version=" << brpc::VersionOfVRef(vr_after) << ", sock " << (void *)unregister_data->socket_ptr_;
+                      << brpc::NRefOfVRef(vr_after) << ",version=" << brpc::VersionOfVRef(vr_after) << ", sock " << (void *)unregister_data->socket_ptr_;
             uint16_t fd_idx = unregister_data->fd_idx_;
             // If the fd is a registered file, recycles the fixed file slot.
             if (fd_idx < UINT16_MAX) {

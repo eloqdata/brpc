@@ -1405,7 +1405,7 @@ void Socket::SocketResume(Socket *sock, InboundRingBuf &rbuf,
   if (prev_empty) {
       uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
       LOG(INFO) << "[SocketResume] before Readdress nref="
-               << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
+               << brpc::NRefOfVRef(vr_before) <<",version=" << brpc::VersionOfVRef(vr_before)<< ", sock " << (void *)sock;
 
     SocketUniquePtr tmp;
     sock->ReAddress(&tmp);
@@ -1413,7 +1413,7 @@ void Socket::SocketResume(Socket *sock, InboundRingBuf &rbuf,
 
       uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
       LOG(INFO) << "[SocketResume] after Readdress nref="
-                << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)sock;
+                << brpc::NRefOfVRef(vr_after) <<",version=" << brpc::VersionOfVRef(vr_after)<< ", sock " << (void *)sock;
   }
   sock->in_bufs_.emplace_back(rbuf.bytes_, rbuf.buf_id_, rbuf.need_rearm_);
   if (prev_empty) {
