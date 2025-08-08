@@ -161,15 +161,15 @@ int RingListener::SubmitRecv(brpc::Socket *sock) {
              << task_group_->group_id_;
         return -1;
     }
-    //uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
-    //LOG(INFO) << "[SubmitRecv] before Readdress nref="
-    //          << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
+    uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
+    LOG(INFO) << "[SubmitRecv] before Readdress nref="
+              << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
     brpc::SocketUniquePtr hold;
     sock->ReAddress(&hold);
     hold.release();
-    //uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
-    //LOG(INFO) << "[SubmitRecv] after Readdress nref="
-    //          << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)sock;
+    uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
+    LOG(INFO) << "[SubmitRecv] after Readdress nref="
+              << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)sock;
     int fd_idx = sock->reg_fd_idx_;
     int sfd = fd_idx >= 0 ? fd_idx : sock->fd();
     io_uring_prep_recv_multishot(sqe, sfd, NULL, 0, 0);
@@ -487,11 +487,18 @@ int RingListener::SubmitCancel(SocketUnRegisterData *unregister_data) {
 
     LOG(INFO) << "=========SubmitCancel called========";
     LOG(INFO) << "socket_ptr:" << (void *)unregister_data->socket_ptr_;
-    if (unregister_data->socket_ptr_ != nullptr) {
+    brpc::Socket *socket_ptr = unregister_data->socket_ptr_;
+    uint64_t vr_before = socket_ptr->_versioned_ref.load(std::memory_order_relaxed);
+    LOG(INFO) << "[SubmitCancel before] nref="
+              << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)socket_ptr;
+    if (socket_ptr != nullptr) {
         brpc::SocketUniquePtr hold;
         unregister_data->socket_ptr_->ReAddress(&hold);
         hold.release();
     }
+    uint64_t vr_after = socket_ptr->_versioned_ref.load(std::memory_order_relaxed);
+    LOG(INFO) << "[SubmitCancel after] nref="
+              << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)socket_ptr;
     int sfd;
     uint64_t data = reinterpret_cast<uint64_t>(unregister_data);
     data <<= 16;
