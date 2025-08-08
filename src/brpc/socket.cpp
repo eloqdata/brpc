@@ -1328,7 +1328,7 @@ void *Socket::SocketProcess(void *arg) {
     //           << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
     SocketUniquePtr s_uptr{sock};
     if (sock->fd() < 0) {
-        LOG(INFO) << "fd < 0!!!!!!!!!"
+        LOG(INFO) << "fd < 0!!!!!!!!!";
         sock->ClearInboundBuf();
     }
     CHECK(sock->bound_g_ == cur_group);
