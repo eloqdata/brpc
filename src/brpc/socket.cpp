@@ -1229,11 +1229,11 @@ void Socket::OnRecycle() {
                 SocketUniquePtr hold;
                 uint64_t vr_before = _versioned_ref.load(std::memory_order_relaxed);
                 LOG(INFO) << "[UnregisterSocket before] nref="
-                          << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)this;
+                          << brpc::NRefOfVRef(vr_before) <<"version=" << brpc::VersionOfVRef(vr_before)<< ", sock " << (void *)this;
                 ReAddress(&hold);
                 uint64_t vr_after = _versioned_ref.load(std::memory_order_relaxed);
                 LOG(INFO) << "[UnregisterSocket after] nref="
-                          << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)this;
+                          << brpc::NRefOfVRef(vr_after) <<"version=" << brpc::VersionOfVRef(vr_after)<< ", sock " << (void *)this;
                 SocketUnRegisterData args;
                 args.fd_ = prev_fd;
                 args.socket_ptr_ = this;
