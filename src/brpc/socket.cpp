@@ -1226,6 +1226,8 @@ void Socket::OnRecycle() {
         if (_on_edge_triggered_events != NULL) {
 #ifdef IO_URING_ENABLED
             if (FLAGS_use_io_uring && bound_g_ != nullptr) {
+                SocketUniquePtr hold;
+                ReAddress(&hold);
                 SocketUnRegisterData args;
                 args.fd_ = prev_fd;
                 args.socket_ptr_ = this;
