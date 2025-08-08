@@ -1228,6 +1228,7 @@ void Socket::OnRecycle() {
             if (FLAGS_use_io_uring && bound_g_ != nullptr) {
                 SocketUnRegisterData args;
                 args.fd_ = prev_fd;
+                args.socket_ptr_ = this;
                 bthread::TaskGroup *cur_group = bthread::tls_task_group;
                 if (cur_group == bound_g_) {
                     LOG(INFO) << "socket.cpp:1232 UnregisterSocket " << (void *) this << " data: " << (void *) &args;
@@ -1364,6 +1365,7 @@ void *Socket::SocketRegister(void *arg) {
 void *Socket::SocketUnRegister(void *arg) {
     bthread::TaskGroup *cur_group = bthread::tls_task_group;
     SocketUnRegisterData *data = static_cast<SocketUnRegisterData *>(arg);
+    data->socket_ptr_ = this;
     int res = cur_group->UnregisterSocket(data);
     if (res < 0) {
         data->Notify(res);
