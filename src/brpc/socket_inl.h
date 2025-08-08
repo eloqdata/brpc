@@ -113,7 +113,9 @@ inline int Socket::Dereference() {
 #ifdef IO_URING_ENABLED
                 bool success = RecycleInBackgroundIfNecessary();
                 if (!success) {
+		            LOG(INFO) << "116 OnRecycle() " << (void *) this;
                     OnRecycle();
+		            LOG(INFO) << "116 OnRecycle() " << (void *) this << " return resource";
                     return_resource(SlotOfSocketId(id));
                 }
 #else
@@ -124,7 +126,7 @@ inline int Socket::Dereference() {
             }
             return 0;
         }
-        LOG(FATAL) << "Invalid SocketId=" << id;
+        LOG(FATAL) << "Invalid SocketId=" << id << ", addr:" << (void *) this << " version=" << ver << " id_ver=" << id_ver;
         return -1;
     }
     LOG(FATAL) << "Over dereferenced SocketId=" << id;
@@ -159,6 +161,7 @@ inline int Socket::Address(SocketId id, SocketUniquePtr* ptr) {
                             expected_vref, MakeVRef(ver2 + 1, 0),
                             butil::memory_order_acquire,
                             butil::memory_order_relaxed)) {
+		                   	LOG(INFO) << "163 OnRecycle() " << (void *)m;
                         m->OnRecycle();
                         return_resource(SlotOfSocketId(id));
                     }
@@ -212,6 +215,7 @@ inline int Socket::AddressFailedAsWell(SocketId id, SocketUniquePtr* ptr) {
                             expected_vref, MakeVRef(ver2 + 1, 0),
                             butil::memory_order_acquire,
                             butil::memory_order_relaxed)) {
+			LOG(INFO) << "217 Recycle" << (void *)m;
                         m->OnRecycle();
                         return_resource(slot);
                     }

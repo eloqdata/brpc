@@ -161,6 +161,15 @@ int RingListener::SubmitRecv(brpc::Socket *sock) {
              << task_group_->group_id_;
         return -1;
     }
+    //uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
+    //LOG(INFO) << "[SubmitRecv] before Readdress nref="
+    //          << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
+    brpc::SocketUniquePtr hold;
+    sock->ReAddress(&hold);
+    hold.release();
+    //uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
+    //LOG(INFO) << "[SubmitRecv] after Readdress nref="
+    //          << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)sock;
     int fd_idx = sock->reg_fd_idx_;
     int sfd = fd_idx >= 0 ? fd_idx : sock->fd();
     io_uring_prep_recv_multishot(sqe, sfd, NULL, 0, 0);
@@ -492,6 +501,7 @@ int RingListener::SubmitCancel(SocketUnRegisterData *unregister_data) {
 
     io_uring_prep_cancel_fd(sqe, sfd, flags);
     data |= OpCodeToInt(OpCode::CancelRecv);
+    //LOG(INFO) << "OpCodeToInit Cancel Recv sfd: " << sfd;
     io_uring_sqe_set_data64(sqe, data);
     if (fd_idx >= 0) {
         sqe->cancel_flags |= IOSQE_FIXED_FILE;
@@ -509,6 +519,7 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
     switch (op) {
         case OpCode::Recv: {
             brpc::Socket *sock = reinterpret_cast<brpc::Socket *>(data >> 16);
+            //LOG(INFO) << "HandleCqe call HandleRecv sock " << (void *) sock;
             HandleRecv(sock, cqe);
             break;
         }
@@ -524,6 +535,7 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
             if (fd_idx < UINT16_MAX) {
                 free_reg_fd_idx_.emplace_back(fd_idx);
             }
+            //LOG(INFO) << "OpCodeToInit HandleCqe CancelRecv fd_idx: " << fd_idx;
             unregister_data->Notify(cqe->res);
             break;
         }
@@ -576,6 +588,7 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
 }
 
 void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
+    //LOG(INFO) << "HandleRecv sock: " << (void *) sock;
     int32_t nw = cqe->res;
     uint16_t buf_id = UINT16_MAX;
     bool need_rearm = false;
@@ -617,6 +630,18 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
 
     InboundRingBuf in_buf{sock, nw, buf_id, need_rearm};
     brpc::Socket::SocketResume(sock, in_buf, task_group_);
+
+    if (!need_rearm) {
+        //uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
+        //LOG(INFO) << "[Before guard] nref="
+        //          << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
+        //{
+            brpc::SocketUniquePtr guard(sock);
+        //}
+        //uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
+        //LOG(INFO) << "[After guard]  nref="
+        //          << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)sock;
+    }
 }
 
 void RingListener::HandleBacklog() {

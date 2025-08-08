@@ -1200,6 +1200,7 @@ int Socket::Status(SocketId id, int32_t* nref) {
 }
 
 void Socket::OnRecycle() {
+    LOG(INFO) << "Socket OnRecycle " << (void *) this;
     const bool create_by_connect = CreatedByConnect();
     if (_app_connect) {
         std::shared_ptr<AppConnect> tmp;
@@ -1229,7 +1230,9 @@ void Socket::OnRecycle() {
                 args.fd_ = prev_fd;
                 bthread::TaskGroup *cur_group = bthread::tls_task_group;
                 if (cur_group == bound_g_) {
+                    LOG(INFO) << "socket.cpp:1232 UnregisterSocket " << (void *) this << " data: " << (void *) &args;
                     int res = bound_g_->UnregisterSocket(&args);
+                    LOG(INFO) << "socket.cpp:1232 UnregisterSocket " << (void *) this << " res: " << res;
                     if (res < 0) {
                         LOG(ERROR) << "Calling UnregisterSocket failed: " << res << " sock: " << *this;
                         args.Notify(-1);
@@ -1320,10 +1323,17 @@ void *Socket::SocketProcess(void *arg) {
     bthread::TaskGroup *cur_group = bthread::tls_task_group;
 
     Socket *sock = static_cast<Socket *>(arg);
-    SocketUniquePtr s_uptr{sock};
+    uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
+    // LOG(INFO) << "[SocketPrecess] nref="
+    //           << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
+    // SocketUniquePtr s_uptr{sock};
+    if (sock->fd() < 0) {
+        sock->ClearInboundBuf();
+    }
     CHECK(sock->bound_g_ == cur_group);
 
     sock->_on_edge_triggered_events(sock);
+    // LOG(INFO) << "SocketProcess finished";
     return nullptr;
 }
 
@@ -1364,6 +1374,7 @@ void *Socket::SocketUnRegister(void *arg) {
 
 void *Socket::SocketRecycle(void *arg) {
     Socket *sock = static_cast<Socket *>(arg);
+    // LOG(INFO) << "OnRecycle socket.cpp:1367" << (void *) sock;
     sock->OnRecycle();
     butil::return_resource(SlotOfSocketId(sock->_this_id));
     return nullptr;
@@ -1379,6 +1390,19 @@ void Socket::SocketResume(Socket *sock, InboundRingBuf &rbuf,
     return;
   }
   bool prev_empty = sock->in_bufs_.empty();
+  if (prev_empty) {
+      //uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
+      //LOG(INFO) << "[SocketResume] before Readdress nref="
+      //         << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
+
+    SocketUniquePtr tmp;
+    sock->ReAddress(&tmp);
+    (void)tmp.release();
+
+      //uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
+      //LOG(INFO) << "[SocketResume] after Readdress nref="
+      //          << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)sock;
+  }
   sock->in_bufs_.emplace_back(rbuf.bytes_, rbuf.buf_id_, rbuf.need_rearm_);
   if (prev_empty) {
     sock->ProcessInbound();
@@ -3380,9 +3404,6 @@ void Socket::ProcessInbound() {
   bthread_attr_t attr;
   attr = BTHREAD_ATTR_NORMAL;
 
-  SocketUniquePtr socket_uptr;
-  ReAddress(&socket_uptr);
-  (void)socket_uptr.release();
   // Start bthread that continously processes messages of this socket.
   bthread_t tid;
   attr.keytable_pool = _keytable_pool;

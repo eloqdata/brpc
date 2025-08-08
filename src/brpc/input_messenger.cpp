@@ -407,6 +407,9 @@ void InputMessenger::OnNewMessagesFromRing(Socket *m) {
     // - Verify will always be called in this bthread at most once and before
     //   any process.
     InputMessenger *messenger = static_cast<InputMessenger *>(m->user());
+    // if (messenger == nullptr) {
+    //     LOG(INFO) << "OnNewMessagesFromRing:" << (void *)m;
+    // }
     // Notice that all *return* no matter successful or not will run last
     // message, even if the socket is about to be closed. This should be
     // OK in most cases.
