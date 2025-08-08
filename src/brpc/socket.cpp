@@ -1365,7 +1365,6 @@ void *Socket::SocketRegister(void *arg) {
 void *Socket::SocketUnRegister(void *arg) {
     bthread::TaskGroup *cur_group = bthread::tls_task_group;
     SocketUnRegisterData *data = static_cast<SocketUnRegisterData *>(arg);
-    data->socket_ptr_ = this;
     int res = cur_group->UnregisterSocket(data);
     if (res < 0) {
         data->Notify(res);
