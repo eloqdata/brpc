@@ -485,6 +485,7 @@ int RingListener::SubmitCancel(SocketUnRegisterData *unregister_data) {
         fd_idx = it->second;
     }
 
+    LOG(INFO) << "=========SubmitCancel called========";
     int sfd;
     uint64_t data = reinterpret_cast<uint64_t>(unregister_data);
     data <<= 16;
