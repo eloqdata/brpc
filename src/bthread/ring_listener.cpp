@@ -542,8 +542,6 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
             if (fd_idx < UINT16_MAX) {
                 free_reg_fd_idx_.emplace_back(fd_idx);
             }
-            brpc::SocketUniquePtr guard(unregister_data->socket_ptr_);
-            //LOG(INFO) << "OpCodeToInit HandleCqe CancelRecv fd_idx: " << fd_idx;
             unregister_data->Notify(cqe->res);
             break;
         }
