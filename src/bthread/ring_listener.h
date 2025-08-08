@@ -137,6 +137,7 @@ public:
     int Register(SocketRegisterData *data);
 
     int Unregister(SocketUnRegisterData *data) {
+        LOG(INFO) << "Unregister";
         return SubmitCancel(data);
     }
 

@@ -1312,7 +1312,7 @@ int TaskGroup::RegisterSocket(SocketRegisterData *data) {
 }
 
 int TaskGroup::UnregisterSocket(SocketUnRegisterData *data) {
-    //LOG(INFO) << "TaskGroup::UnregisterSocket SocketUnRegisterData" << (void *) data;
+    LOG(INFO) << "TaskGroup::UnregisterSocket SocketUnRegisterData" << (void *) data;
     return ring_listener_->Unregister(data);
 }
 
