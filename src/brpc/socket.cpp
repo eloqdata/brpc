@@ -1363,7 +1363,7 @@ void *Socket::SocketRegister(void *arg) {
 }
 
 void *Socket::SocketUnRegister(void *arg) {
-    LOG(INFO) << "SocketUnRegister call"
+    LOG(INFO) << "SocketUnRegister call";
     bthread::TaskGroup *cur_group = bthread::tls_task_group;
     SocketUnRegisterData *data = static_cast<SocketUnRegisterData *>(arg);
     int res = cur_group->UnregisterSocket(data);
