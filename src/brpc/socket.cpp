@@ -1323,10 +1323,10 @@ void *Socket::SocketProcess(void *arg) {
     bthread::TaskGroup *cur_group = bthread::tls_task_group;
 
     Socket *sock = static_cast<Socket *>(arg);
-    uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
+    // uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
     // LOG(INFO) << "[SocketPrecess] nref="
     //           << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
-    // SocketUniquePtr s_uptr{sock};
+    SocketUniquePtr s_uptr{sock};
     if (sock->fd() < 0) {
         sock->ClearInboundBuf();
     }
