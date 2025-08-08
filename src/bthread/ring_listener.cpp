@@ -487,7 +487,7 @@ int RingListener::SubmitCancel(SocketUnRegisterData *unregister_data) {
 
     LOG(INFO) << "=========SubmitCancel called========";
     brpc::SocketUniquePtr hold;
-    unregister_data->socket_ptr_->Readress(&hold);
+    unregister_data->socket_ptr_->ReAddress(&hold);
     hold.release();
     int sfd;
     uint64_t data = reinterpret_cast<uint64_t>(unregister_data);
