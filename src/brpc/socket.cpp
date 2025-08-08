@@ -1227,7 +1227,13 @@ void Socket::OnRecycle() {
 #ifdef IO_URING_ENABLED
             if (FLAGS_use_io_uring && bound_g_ != nullptr) {
                 SocketUniquePtr hold;
+                uint64_t vr_before = _versioned_ref.load(std::memory_order_relaxed);
+                LOG(INFO) << "[UnregisterSocket before] nref="
+                          << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)this;
                 ReAddress(&hold);
+                uint64_t vr_after = _versioned_ref.load(std::memory_order_relaxed);
+                LOG(INFO) << "[UnregisterSocket after] nref="
+                          << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)this;
                 SocketUnRegisterData args;
                 args.fd_ = prev_fd;
                 args.socket_ptr_ = this;
@@ -1258,6 +1264,8 @@ void Socket::OnRecycle() {
                 bound_g_ = nullptr;
                 reg_fd_idx_ = -1;
                 reg_fd_ = -1;
+                uint64_t vr_end = _versioned_ref.load(std::memory_order_relaxed);
+                LOG(INFO) << "[UnregisterSocket end] ref " << vr_end << ", sock " << (void *)this;
             } else {
 #endif
                 GetGlobalEventDispatcher(prev_fd).RemoveConsumer(prev_fd);
