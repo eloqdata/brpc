@@ -649,6 +649,9 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
     InboundRingBuf in_buf{sock, nw, buf_id, need_rearm};
     brpc::Socket::SocketResume(sock, in_buf, task_group_);
 
+    if (need_rearm) {
+         guard.release();
+    }
     /*
     if (!need_rearm) {
         uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
