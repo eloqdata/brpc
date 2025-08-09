@@ -535,6 +535,9 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
             brpc::Socket *sock = reinterpret_cast<brpc::Socket *>(data >> 16);
             //LOG(INFO) << "HandleCqe call HandleRecv sock " << (void *) sock;
             HandleRecv(sock, cqe);
+            uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
+            LOG(INFO) << "[HandleRecv called] nref="
+                      << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)sock;
             break;
         }
         case OpCode::CancelRecv: {
@@ -623,6 +626,7 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
             uint64_t data = OpCodeToInt(OpCode::Recv);
             bool success = SubmitBacklog(sock, data);
             if (success) {
+                LOG(INFO) << "[HandleRecv] return 0" << ", sock " << (void *)sock;
                 return;
             }
         }
@@ -667,6 +671,7 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
                   << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)sock;
     }
     */
+    LOG(INFO) << "[HandleRecv] return 1" << ", sock " << (void *)sock;
 }
 
 void RingListener::HandleBacklog() {
