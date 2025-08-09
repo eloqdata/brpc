@@ -1313,7 +1313,6 @@ void Socket::OnRecycle() {
                 reg_fd_ = -1;
                 uint64_t vr_end = _versioned_ref.load(std::memory_order_relaxed);
                 LOG(INFO) << "[UnregisterSocket end] ref " << vr_end << ", sock " << (void *)this;
-                */
             } else {
 #endif
                 GetGlobalEventDispatcher(prev_fd).RemoveConsumer(prev_fd);
