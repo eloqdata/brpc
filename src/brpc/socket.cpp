@@ -3521,6 +3521,9 @@ int Socket::CopyDataRead() {
 
 void Socket::ClearInboundBuf() {
     bthread::TaskGroup *cur_group = bthread::tls_task_group;
+    if (bound_g_ == nullptr) {
+        LOG(INFO) << "CleanInBountBuf failed " << (void *) this;
+    }
     CHECK(cur_group == bound_g_);
     for (; buf_idx_ < in_bufs_.size(); ++buf_idx_) {
         auto &buf = in_bufs_[buf_idx_];
