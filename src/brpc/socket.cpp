@@ -1076,7 +1076,7 @@ int Socket::SetFailed(int error_code, const char* error_fmt, ...) {
                 LOG(INFO) << "[UnregisterSocket after] nref="
                           << brpc::NRefOfVRef(vr_after) <<"version=" << brpc::VersionOfVRef(vr_after)<< ", sock " << (void *)this;
                 SocketUnRegisterData args;
-                args.fd_ = prev_fd;
+                args.fd_ = fd();
                 args.socket_ptr_ = this;
                 bthread::TaskGroup *cur_group = bthread::tls_task_group;
                 if (cur_group == bound_g_) {
