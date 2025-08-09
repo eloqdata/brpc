@@ -544,7 +544,7 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
                         << ", group: " << task_group_->group_id_
                         << ", sock: " << unregister_data->fd_;
             }
-            SocketUniquePtr guard(unregister_data->socket_ptr_);
+            brpc::SocketUniquePtr guard(unregister_data->socket_ptr_);
             uint64_t vr_after = unregister_data->socket_ptr_->_versioned_ref.load(std::memory_order_relaxed);
             LOG(INFO) << "[HandleCqe CancelRecv] nref="
                       << brpc::NRefOfVRef(vr_after) << ",version=" << brpc::VersionOfVRef(vr_after) << ", sock " << (void *)unregister_data->socket_ptr_;
