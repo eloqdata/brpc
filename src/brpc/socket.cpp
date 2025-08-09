@@ -1097,7 +1097,6 @@ int Socket::SetFailed(int error_code, const char* error_fmt, ...) {
                     if (bthread_start_from_bound_group(
                         bound_g_->group_id_, &tid, &attr, SocketUnRegister, args_ptr) != 0) {
                         LOG(FATAL) << "Fail to start SocketUnRegister";
-                        SocketUnRegister(args_ptr);
                     }
                 }
                 int res = args.Wait();
@@ -1108,7 +1107,7 @@ int Socket::SetFailed(int error_code, const char* error_fmt, ...) {
                 //reg_fd_idx_ = -1;
                 //reg_fd_ = -1;
                 uint64_t vr_end = _versioned_ref.load(std::memory_order_relaxed);
-                LOG(INFO) << "[UnregisterSocket end] ref " << vr_end << ", sock " << (void *)this;
+                LOG(INFO) << "[Setfailed end] ref " << brpc::NRefOfVRef(vr_end) <<",version=" << brpc::VersionOfVRef(vr_end) << ", sock " << (void *)this;
             }
 #endif
             // Update _error_text
