@@ -1107,7 +1107,7 @@ int Socket::SetFailed(int error_code, const char* error_fmt, ...) {
                 //reg_fd_idx_ = -1;
                 //reg_fd_ = -1;
                 uint64_t vr_end = _versioned_ref.load(std::memory_order_relaxed);
-                LOG(INFO) << "[Setfailed end] ref " << brpc::NRefOfVRef(vr_end) <<",version=" << brpc::VersionOfVRef(vr_end) << ", sock " << (void *)this;
+                LOG(INFO) << "[Setfailed handle] ref " << brpc::NRefOfVRef(vr_end) <<",version=" << brpc::VersionOfVRef(vr_end) << ", sock " << (void *)this;
             }
 #endif
             // Update _error_text
@@ -1165,6 +1165,8 @@ int Socket::SetFailed(int error_code, const char* error_fmt, ...) {
             ReleaseAdditionalReference();
             // NOTE: This Socket may be recycled at this point, don't
             // touch anything.
+            uint64_t vr_end = _versioned_ref.load(std::memory_order_relaxed);
+            LOG(INFO) << "[Setfailed end] ref " << brpc::NRefOfVRef(vr_end) <<",version=" << brpc::VersionOfVRef(vr_end) << ", sock " << (void *)this;
             return 0;
         }
     }
