@@ -632,6 +632,7 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
         }
 
         if (err == EAGAIN || err == EINTR || err == ENOBUFS) {
+            LOG(INFO) << "[HandleRecv] err" << ", sock " << (void *)sock;
             need_rearm = true;
         }
     } else {
@@ -648,6 +649,7 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
         // If IORING_CQE_F_MORE isn't set, this multishot recv won't post any
         // further completions.
         if (!(cqe->flags & IORING_CQE_F_MORE)) {
+            LOG(INFO) << "[HandleRecv] cqe more" << ", sock " << (void *)sock;
             need_rearm = true;
         }
     }
