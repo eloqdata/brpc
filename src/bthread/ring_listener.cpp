@@ -605,7 +605,9 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
 }
 
 void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
-    //LOG(INFO) << "HandleRecv sock: " << (void *) sock;
+    uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
+    LOG(INFO) << "[HandleRecv] nref="
+              << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
     brpc::SocketUniquePtr guard(sock);
     int32_t nw = cqe->res;
     uint16_t buf_id = UINT16_MAX;
