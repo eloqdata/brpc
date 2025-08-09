@@ -129,7 +129,7 @@ inline int Socket::Dereference() {
         LOG(FATAL) << "Invalid SocketId=" << id << ", addr:" << (void *) this << " version=" << ver << " id_ver=" << id_ver;
         return -1;
     }
-    LOG(FATAL) << "Over dereferenced SocketId=" << id;
+    LOG(FATAL) << "Over dereferenced SocketId=" << id << ", nref=" << nref;
     return -1;
 }
 
