@@ -1048,6 +1048,7 @@ int Socket::isolated_times() const {
 }
 
 int Socket::SetFailed(int error_code, const char* error_fmt, ...) {
+    LOG(INFO) << "socket.cpp:1051 Socket SetFailed>>>>>>";
     if (error_code == 0) {
         CHECK(false) << "error_code is 0";
         error_code = EFAILEDSOCKET;
