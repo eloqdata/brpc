@@ -396,6 +396,7 @@ void InputMessenger::OnNewMessages(Socket* m) {
 }
 #ifdef IO_URING_ENABLED
 void InputMessenger::OnNewMessagesFromRing(Socket *m) {
+    LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] " << (void *)m;
     // Notes:
     // - If the socket has only one message, the message will be parsed and
     //   processed in this bthread. nova-pbrpc and http works in this way.

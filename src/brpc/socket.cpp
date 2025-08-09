@@ -1385,9 +1385,9 @@ void *Socket::SocketProcess(void *arg) {
 
     Socket *sock = static_cast<Socket *>(arg);
     uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
-    /*
     LOG(INFO) << "[SocketPrecess] nref="
               << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
+    /*
     SocketUniquePtr s_uptr{sock};
     */
     if (sock->fd() < 0) {
@@ -1396,7 +1396,7 @@ void *Socket::SocketProcess(void *arg) {
     CHECK(sock->bound_g_ == cur_group);
 
     sock->_on_edge_triggered_events(sock);
-    // LOG(INFO) << "SocketProcess finished";
+    LOG(INFO) << "SocketProcess finished";
     return nullptr;
 }
 
