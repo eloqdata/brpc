@@ -648,15 +648,15 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
     brpc::Socket::SocketResume(sock, in_buf, task_group_);
 
     if (!need_rearm) {
-        //uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
-        //LOG(INFO) << "[Before guard] nref="
-        //          << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
-        //{
+        uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
+        LOG(INFO) << "[Before not rearm guard] nref="
+                  << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
+        {
             brpc::SocketUniquePtr guard(sock);
-        //}
-        //uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
-        //LOG(INFO) << "[After guard]  nref="
-        //          << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)sock;
+        }
+        uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
+        LOG(INFO) << "[After not rearm guard]  nref="
+                  << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)sock;
     }
 }
 
