@@ -1382,9 +1382,11 @@ void *Socket::SocketProcess(void *arg) {
 
     Socket *sock = static_cast<Socket *>(arg);
     uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
+    /*
     LOG(INFO) << "[SocketPrecess] nref="
               << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
     SocketUniquePtr s_uptr{sock};
+    */
     if (sock->fd() < 0) {
         sock->ClearInboundBuf();
     }
@@ -1449,19 +1451,21 @@ void Socket::SocketResume(Socket *sock, InboundRingBuf &rbuf,
     return;
   }
   bool prev_empty = sock->in_bufs_.empty();
+  /*
   if (prev_empty) {
       uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
       LOG(INFO) << "[SocketResume] before Readdress nref="
                << brpc::NRefOfVRef(vr_before) <<",version=" << brpc::VersionOfVRef(vr_before)<< ", sock " << (void *)sock;
 
-    SocketUniquePtr tmp;
-    sock->ReAddress(&tmp);
-    (void)tmp.release();
+      SocketUniquePtr tmp;
+      sock->ReAddress(&tmp);
+      (void)tmp.release();
 
       uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
       LOG(INFO) << "[SocketResume] after Readdress nref="
                 << brpc::NRefOfVRef(vr_after) <<",version=" << brpc::VersionOfVRef(vr_after)<< ", sock " << (void *)sock;
   }
+  */
   sock->in_bufs_.emplace_back(rbuf.bytes_, rbuf.buf_id_, rbuf.need_rearm_);
   if (prev_empty) {
     sock->ProcessInbound();
