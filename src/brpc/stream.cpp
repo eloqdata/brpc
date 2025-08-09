@@ -670,6 +670,7 @@ void Stream::Close() {
 }
 
 int Stream::SetFailed(StreamId id) {
+    LOG(INFO) << "SetFailed>>>>>>";
     SocketUniquePtr ptr;
     if (Socket::AddressFailedAsWell(id, &ptr) == -1) {
         // Don't care recycled stream
