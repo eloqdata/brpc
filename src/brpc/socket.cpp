@@ -1102,9 +1102,9 @@ int Socket::SetFailed(int error_code, const char* error_fmt, ...) {
                 if (res < 0) {
                     LOG(ERROR) << "SocketUnRegister failed: " << res << " sock: " << *this;
                 }
-                bound_g_ = nullptr;
-                reg_fd_idx_ = -1;
-                reg_fd_ = -1;
+                //bound_g_ = nullptr;
+                //reg_fd_idx_ = -1;
+                //reg_fd_ = -1;
                 uint64_t vr_end = _versioned_ref.load(std::memory_order_relaxed);
                 LOG(INFO) << "[UnregisterSocket end] ref " << vr_end << ", sock " << (void *)this;
             }
@@ -1307,6 +1307,7 @@ void Socket::OnRecycle() {
                 if (res < 0) {
                     LOG(ERROR) << "SocketUnRegister failed: " << res << " sock: " << *this;
                 }
+*/
                 bound_g_ = nullptr;
                 reg_fd_idx_ = -1;
                 reg_fd_ = -1;
