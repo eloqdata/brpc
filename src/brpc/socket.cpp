@@ -1065,6 +1065,50 @@ int Socket::SetFailed(int error_code, const char* error_fmt, ...) {
                 vref, MakeVRef(id_ver + 1, NRefOfVRef(vref)),
                 butil::memory_order_release,
                 butil::memory_order_relaxed)) {
+#ifdef IO_URING_ENABLED
+            if (FLAGS_use_io_uring && bound_g_ != nullptr) {
+                SocketUniquePtr hold;
+                uint64_t vr_before = _versioned_ref.load(std::memory_order_relaxed);
+                LOG(INFO) << "[UnregisterSocket before] nref="
+                          << brpc::NRefOfVRef(vr_before) <<"version=" << brpc::VersionOfVRef(vr_before)<< ", sock " << (void *)this;
+                ReAddress(&hold);
+                uint64_t vr_after = _versioned_ref.load(std::memory_order_relaxed);
+                LOG(INFO) << "[UnregisterSocket after] nref="
+                          << brpc::NRefOfVRef(vr_after) <<"version=" << brpc::VersionOfVRef(vr_after)<< ", sock " << (void *)this;
+                SocketUnRegisterData args;
+                args.fd_ = prev_fd;
+                args.socket_ptr_ = this;
+                bthread::TaskGroup *cur_group = bthread::tls_task_group;
+                if (cur_group == bound_g_) {
+                    LOG(INFO) << "socket.cpp:1232 UnregisterSocket " << (void *) this << " data: " << (void *) &args;
+                    int res = bound_g_->UnregisterSocket(&args);
+                    LOG(INFO) << "socket.cpp:1232 UnregisterSocket " << (void *) this << " res: " << res;
+                    if (res < 0) {
+                        LOG(ERROR) << "Calling UnregisterSocket failed: " << res << " sock: " << *this;
+                        args.Notify(-1);
+                    }
+                } else {
+                    // This thread is not the socket's bound_g_, start a bound bthread.
+                    bthread_attr_t attr = BTHREAD_ATTR_NORMAL;
+                    bthread_t tid;
+                    void *args_ptr = &args;
+                    if (bthread_start_from_bound_group(
+                        bound_g_->group_id_, &tid, &attr, SocketUnRegister, args_ptr) != 0) {
+                        LOG(FATAL) << "Fail to start SocketUnRegister";
+                        SocketUnRegister(args_ptr);
+                    }
+                }
+                int res = args.Wait();
+                if (res < 0) {
+                    LOG(ERROR) << "SocketUnRegister failed: " << res << " sock: " << *this;
+                }
+                bound_g_ = nullptr;
+                reg_fd_idx_ = -1;
+                reg_fd_ = -1;
+                uint64_t vr_end = _versioned_ref.load(std::memory_order_relaxed);
+                LOG(INFO) << "[UnregisterSocket end] ref " << vr_end << ", sock " << (void *)this;
+            }
+#endif
             // Update _error_text
             std::string error_text;
             if (error_fmt != NULL) {
@@ -1227,6 +1271,7 @@ void Socket::OnRecycle() {
         if (_on_edge_triggered_events != NULL) {
 #ifdef IO_URING_ENABLED
             if (FLAGS_use_io_uring && bound_g_ != nullptr) {
+                /*
                 SocketUniquePtr hold;
                 uint64_t vr_before = _versioned_ref.load(std::memory_order_relaxed);
                 LOG(INFO) << "[UnregisterSocket before] nref="
@@ -1267,6 +1312,7 @@ void Socket::OnRecycle() {
                 reg_fd_ = -1;
                 uint64_t vr_end = _versioned_ref.load(std::memory_order_relaxed);
                 LOG(INFO) << "[UnregisterSocket end] ref " << vr_end << ", sock " << (void *)this;
+                */
             } else {
 #endif
                 GetGlobalEventDispatcher(prev_fd).RemoveConsumer(prev_fd);
