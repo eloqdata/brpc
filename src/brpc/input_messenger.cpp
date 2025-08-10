@@ -452,10 +452,16 @@ void InputMessenger::OnNewMessagesFromRing(Socket *m) {
             return;
         }
     }
+    uint64_t vr_1 = m->_versioned_ref.load(std::memory_order_relaxed);
+    LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] vr_1 nref="
+              << brpc::NRefOfVRef(vr_1) << ", version:" << brpc::VersionOfVRef(vr_1) << ", sock " << (void *)m;
 
     if (read_eof) {
         m->SetEOF();
     }
+    uint64_t vr_2 = m->_versioned_ref.load(std::memory_order_relaxed);
+    LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] vr_2 nref="
+              << brpc::NRefOfVRef(vr_2) << ", version:" << brpc::VersionOfVRef(vr_2) << ", sock " << (void *)m;
     m->ClearInboundBuf();
     uint64_t vr_end = m->_versioned_ref.load(std::memory_order_relaxed);
     LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] end nref="
