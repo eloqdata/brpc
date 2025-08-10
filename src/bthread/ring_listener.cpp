@@ -533,11 +533,13 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
     switch (op) {
         case OpCode::Recv: {
             brpc::Socket *sock = reinterpret_cast<brpc::Socket *>(data >> 16);
-            //LOG(INFO) << "HandleCqe call HandleRecv sock " << (void *) sock;
+            uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
+            LOG(INFO) << "[HandleRecv calling] nref="
+                      << brpc::NRefOfVRef(vr_before) << ", version:" << brpc::VersionOfVRef(vr_before) << ", sock " << (void *)sock;
             HandleRecv(sock, cqe);
             uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
             LOG(INFO) << "[HandleRecv called] nref="
-                      << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)sock;
+                      << brpc::NRefOfVRef(vr_after) << ", version:" << brpc::VersionOfVRef(vr_after) << ", sock " << (void *)sock;
             break;
         }
         case OpCode::CancelRecv: {
