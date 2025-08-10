@@ -678,7 +678,7 @@ int Socket::ResetFileDescriptor(int fd, size_t bound_gid) {
         attr = BTHREAD_ATTR_NORMAL;
 
         SocketUniquePtr socket_uptr;
-        LOG(INFO) << "ResetFileD"
+        LOG(INFO) << "ResetFileD";
         ReAddress(&socket_uptr);
         (void)socket_uptr.release();
         // Start bthread that continously processes messages of this socket.
