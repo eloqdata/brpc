@@ -617,6 +617,7 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
     int32_t nw = cqe->res;
     uint16_t buf_id = UINT16_MAX;
     bool need_rearm = false;
+    bool keep_io_ref = false;
 
     CHECK(sock != nullptr);
 
@@ -637,6 +638,7 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
         if (err == EAGAIN || err == EINTR || err == ENOBUFS) {
             LOG(INFO) << "[HandleRecv] err" << ", sock " << (void *)sock;
             need_rearm = true;
+            keep_io_ref = true;
         }
     } else {
         // Not having a buffer attached should only happen if we get a zero sized
@@ -652,8 +654,10 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
         // If IORING_CQE_F_MORE isn't set, this multishot recv won't post any
         // further completions.
         if (!(cqe->flags & IORING_CQE_F_MORE)) {
-            LOG(INFO) << "[HandleRecv] cqe more" << ", sock " << (void *)sock;
+            LOG(INFO) << "[HandleRecv] cqe no more" << ", sock " << (void *)sock;
             need_rearm = true;
+        } else {
+            keep_io_ref = true;
         }
     }
 
