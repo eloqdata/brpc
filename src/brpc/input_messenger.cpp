@@ -426,6 +426,9 @@ void InputMessenger::OnNewMessagesFromRing(Socket *m) {
         LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] vr_0 nref="
                   << brpc::NRefOfVRef(vr_0) << ", version:" << brpc::VersionOfVRef(vr_0) << ", sock " << (void *)m;
         const ssize_t nr = m->CopyDataRead();
+        uint64_t vr_01 = m->_versioned_ref.load(std::memory_order_relaxed);
+        LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] vr_01 nref="
+                  << brpc::NRefOfVRef(vr_01) << ", version:" << brpc::VersionOfVRef(vr_01) << ", sock " << (void *)m;
 
         if (nr <= 0) {
             if (0 == nr) {
