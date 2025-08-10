@@ -1387,10 +1387,7 @@ void *Socket::SocketProcess(void *arg) {
     uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
     LOG(INFO) << "[SocketProcess] before nref="
               << brpc::NRefOfVRef(vr_before)  << ", version:" << brpc::VersionOfVRef(vr_before) << ", sock " << (void *)sock;
-    /*
-    SocketUniquePtr s_uptr{sock};
-    */
-    SocketUniquePtr guard(sock);
+    SocketUniquePtr guard;
     sock->ReAddress(&guard);
 
     uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
