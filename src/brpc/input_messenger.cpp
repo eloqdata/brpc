@@ -455,7 +455,7 @@ void InputMessenger::OnNewMessagesFromRing(Socket *m) {
         m->SetEOF();
     }
     m->ClearInboundBuf();
-    LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] exit" << (void *)m;
+    LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] exit " << (void *)m;
 }
 #endif
 

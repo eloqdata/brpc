@@ -1402,7 +1402,9 @@ void *Socket::SocketProcess(void *arg) {
     CHECK(sock->bound_g_ == cur_group);
 
     sock->_on_edge_triggered_events(sock);
-    LOG(INFO) << "SocketProcess finished";
+    uint64_t vr_end = sock->_versioned_ref.load(std::memory_order_relaxed);
+    LOG(INFO) << "[SocketProcess] end nref="
+              << brpc::NRefOfVRef(vr_end) << ", version:" << brpc::VersionOfVRef(vr_end) << ", sock " << (void *)sock;
     return nullptr;
 }
 
