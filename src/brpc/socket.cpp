@@ -1048,7 +1048,7 @@ int Socket::isolated_times() const {
 }
 
 int Socket::SetFailed(int error_code, const char* error_fmt, ...) {
-    LOG(INFO) << "socket.cpp:1051 Socket SetFailed>>>>>>";
+    LOG(INFO) << "socket.cpp:1051 Socket SetFailed>>>>>>" << (void *)this;
     if (error_code == 0) {
         CHECK(false) << "error_code is 0";
         error_code = EFAILEDSOCKET;
@@ -1385,7 +1385,7 @@ void *Socket::SocketProcess(void *arg) {
 
     Socket *sock = static_cast<Socket *>(arg);
     uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
-    LOG(INFO) << "[SocketPrecess] before nref="
+    LOG(INFO) << "[SocketPreoess] before nref="
               << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
     /*
     SocketUniquePtr s_uptr{sock};
@@ -1394,7 +1394,7 @@ void *Socket::SocketProcess(void *arg) {
     sock->ReAddress(&guard);
 
     uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
-    LOG(INFO) << "[SocketPrecess] after nref="
+    LOG(INFO) << "[SocketProcess] after nref="
               << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)sock;
     if (sock->fd() < 0) {
         sock->ClearInboundBuf();
