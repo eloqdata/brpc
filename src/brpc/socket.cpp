@@ -1388,8 +1388,7 @@ void *Socket::SocketProcess(void *arg) {
     uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
     LOG(INFO) << "[SocketProcess] before nref="
               << brpc::NRefOfVRef(vr_before)  << ", version:" << brpc::VersionOfVRef(vr_before) << ", sock " << (void *)sock;
-    SocketUniquePtr guard;
-    sock->ReAddress(&guard);
+    SocketUniquePtr guard(sock);
 
     uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
     LOG(INFO) << "[SocketProcess] after nref="
@@ -1460,24 +1459,16 @@ void Socket::SocketResume(Socket *sock, InboundRingBuf &rbuf,
     return;
   }
   bool prev_empty = sock->in_bufs_.empty();
-  /*
-  if (prev_empty) {
-      uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
-      LOG(INFO) << "[SocketResume] before Readdress nref="
-               << brpc::NRefOfVRef(vr_before) <<",version=" << brpc::VersionOfVRef(vr_before)<< ", sock " << (void *)sock;
-
-      SocketUniquePtr tmp;
-      sock->ReAddress(&tmp);
-      (void)tmp.release();
-
-      uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
-      LOG(INFO) << "[SocketResume] after Readdress nref="
-                << brpc::NRefOfVRef(vr_after) <<",version=" << brpc::VersionOfVRef(vr_after)<< ", sock " << (void *)sock;
-  }
-  */
   sock->in_bufs_.emplace_back(rbuf.bytes_, rbuf.buf_id_, rbuf.need_rearm_);
   if (prev_empty) {
-    sock->ProcessInbound();
+      SocketUniquePtr add_ref;
+      sock->ReAddress(&add_ref);
+      add_ref.release();
+      uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
+      LOG(INFO) << "[SocketResume] before ProcessInBound nref="
+                << brpc::NRefOfVRef(vr_before)  << ", version:" << brpc::VersionOfVRef(vr_before) << ", sock " << (void *)sock;
+
+      sock->ProcessInbound();
   }
 }
 #endif
@@ -2672,7 +2663,7 @@ int Socket::StartInputEvent(SocketId id, uint32_t events,
 
 void DereferenceSocket(Socket* s) {
     if (s) {
-        LOG(INFO) << "DererfenceSocket () call Dereference()" << (void *)s;
+        LOG(INFO) << "DereferenceSocket () call Dereference()" << (void *)s;
         s->Dereference();
     }
 }

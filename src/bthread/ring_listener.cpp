@@ -485,8 +485,7 @@ int RingListener::SubmitCancel(SocketUnRegisterData *unregister_data) {
         fd_idx = it->second;
     }
 
-    LOG(INFO) << "=========SubmitCancel called========";
-    LOG(INFO) << "socket_ptr:" << (void *)unregister_data->socket_ptr_;
+    LOG(INFO) << "=========SubmitCancel called======== socket_ptr:" << (void *)unregister_data->socket_ptr_;
     brpc::Socket *socket_ptr = unregister_data->socket_ptr_;
     uint64_t vr_before = socket_ptr->_versioned_ref.load(std::memory_order_relaxed);
     LOG(INFO) << "[SubmitCancel before] nref="
