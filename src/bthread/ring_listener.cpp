@@ -163,13 +163,13 @@ int RingListener::SubmitRecv(brpc::Socket *sock) {
     }
     uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
     LOG(INFO) << "[SubmitRecv] before Readdress nref="
-              << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
+              << brpc::NRefOfVRef(vr_before) << ", version:" << brpc::VersionOfVRef(vr_before) << ", sock " << (void *)sock;
     brpc::SocketUniquePtr hold;
     sock->ReAddress(&hold);
     hold.release();
     uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
     LOG(INFO) << "[SubmitRecv] after Readdress nref="
-              << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)sock;
+              << brpc::NRefOfVRef(vr_after) << ", version:" << brpc::VersionOfVRef(vr_after) << ", sock " << (void *)sock;
     int fd_idx = sock->reg_fd_idx_;
     int sfd = fd_idx >= 0 ? fd_idx : sock->fd();
     io_uring_prep_recv_multishot(sqe, sfd, NULL, 0, 0);
