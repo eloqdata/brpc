@@ -129,7 +129,7 @@ inline int Socket::Dereference() {
         LOG(FATAL) << "Invalid SocketId=" << id << ", addr:" << (void *) this << " version=" << ver << " id_ver=" << id_ver;
         return -1;
     }
-    LOG(FATAL) << "Over dereferenced SocketId=" << id << ", nref=" << nref;
+    LOG(FATAL) << "Over dereferenced SocketId=" << id << ", nref=" << nref << ", sock:" << (void *) this;
     return -1;
 }
 
@@ -174,7 +174,7 @@ inline int Socket::Address(SocketId id, SocketUniquePtr* ptr) {
                 // Addressed a free slot.
             }
         } else {
-            CHECK(false) << "Over dereferenced SocketId=" << id;
+            CHECK(false) << "Address Over dereferenced SocketId=" << id << ", sock:" << (void *) m;
         }
     }
     return -1;
