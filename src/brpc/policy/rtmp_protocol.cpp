@@ -2615,6 +2615,7 @@ bool RtmpChunkStream::OnCreateStream(const RtmpMessageHeader& mh,
         error_text = "Fail to create stream";
         LOG(ERROR) << error_text;
     } else {
+        LOG(INFO) << "CreateStream";
         socket->ReAddress(&stream->_rtmpsock);
         if (!connection_context()->AddServerStream(stream.get())) {
             error_text = "Fail to add stream";
@@ -3657,6 +3658,7 @@ void PackRtmpRequest(butil::IOBuf* /*buf*/,
     }
     cntl->set_log_id(transaction_id);
     RtmpCreateStreamMessage* msg = new RtmpCreateStreamMessage;
+    LOG(INFO) << "RtmpAddress";
     s->ReAddress(&msg->socket);
     msg->transaction_id = transaction_id;
     msg->options = stream->options();

@@ -611,6 +611,7 @@ int Stream::SetHostSocket(Socket *host_socket) {
         return -1;
     }
     SocketUniquePtr ptr;
+    LOG(INFO) << "SetHostSocket";
     host_socket->ReAddress(&ptr);
     // TODO add *this to host socke
     if (ptr->AddStream(id()) != 0) {
@@ -698,6 +699,7 @@ void Stream::HandleRpcResponse(butil::IOBuf* response_buffer) {
         return;
     }
     _host_socket->PostponeEOF();
+    LOG(INFO) << "host_socket";
     _host_socket->ReAddress(&msg->_socket);
     msg->_received_us = butil::gettimeofday_us(); 
     msg->_base_real_us = butil::gettimeofday_us();
