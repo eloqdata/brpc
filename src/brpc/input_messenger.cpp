@@ -422,6 +422,9 @@ void InputMessenger::OnNewMessagesFromRing(Socket *m) {
         const int64_t received_us = butil::cpuwide_time_us();
         const int64_t base_realtime = butil::gettimeofday_us() - received_us;
 
+        uint64_t vr_0 = m->_versioned_ref.load(std::memory_order_relaxed);
+        LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] vr_0 nref="
+                  << brpc::NRefOfVRef(vr_0) << ", version:" << brpc::VersionOfVRef(vr_0) << ", sock " << (void *)m;
         const ssize_t nr = m->CopyDataRead();
 
         if (nr <= 0) {
