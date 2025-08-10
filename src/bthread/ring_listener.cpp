@@ -617,7 +617,6 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
     int32_t nw = cqe->res;
     uint16_t buf_id = UINT16_MAX;
     bool need_rearm = false;
-    bool keep_io_ref = false;
 
     CHECK(sock != nullptr);
 
@@ -630,7 +629,6 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
             bool success = SubmitBacklog(sock, data);
             if (success) {
                 LOG(INFO) << "[HandleRecv] return 0" << ", sock " << (void *)sock;
-                guard.release();
                 return;
             }
         }
@@ -638,7 +636,6 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
         if (err == EAGAIN || err == EINTR || err == ENOBUFS) {
             LOG(INFO) << "[HandleRecv] err" << ", sock " << (void *)sock;
             need_rearm = true;
-            keep_io_ref = true;
         }
     } else {
         // Not having a buffer attached should only happen if we get a zero sized
@@ -656,32 +653,17 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
         if (!(cqe->flags & IORING_CQE_F_MORE)) {
             LOG(INFO) << "[HandleRecv] cqe no more" << ", sock " << (void *)sock;
             need_rearm = true;
-        } else {
-            keep_io_ref = true;
         }
     }
 
     InboundRingBuf in_buf{sock, nw, buf_id, need_rearm};
     brpc::Socket::SocketResume(sock, in_buf, task_group_);
 
-    if (keep_io_ref) {
+    if (!need_rearm) {
          LOG(INFO) << "need rearm, sock " << (void *)sock;
          guard.release();
     }
-    /*
-    if (!need_rearm) {
-        uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
-        LOG(INFO) << "[Before not rearm guard] nref="
-                  << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
-        {
-            brpc::SocketUniquePtr guard(sock);
-        }
-        uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
-        LOG(INFO) << "[After not rearm guard]  nref="
-                  << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)sock;
-    }
-    */
-    LOG(INFO) << "[HandleRecv] return 1" << ", sock " << (void *)sock;
+    LOG(INFO) << "[HandleRecv] return at end" << ", sock " << (void *)sock;
 }
 
 void RingListener::HandleBacklog() {
