@@ -1385,11 +1385,17 @@ void *Socket::SocketProcess(void *arg) {
 
     Socket *sock = static_cast<Socket *>(arg);
     uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
-    LOG(INFO) << "[SocketPrecess] nref="
+    LOG(INFO) << "[SocketPrecess] before nref="
               << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
     /*
     SocketUniquePtr s_uptr{sock};
     */
+    SocketUniquePtr guard(sock);
+    ReAddress(&guard);
+
+    uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
+    LOG(INFO) << "[SocketPrecess] after nref="
+              << brpc::NRefOfVRef(vr_after) << ", sock " << (void *)sock;
     if (sock->fd() < 0) {
         sock->ClearInboundBuf();
     }
