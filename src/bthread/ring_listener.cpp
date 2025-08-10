@@ -664,7 +664,7 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
     InboundRingBuf in_buf{sock, nw, buf_id, need_rearm};
     brpc::Socket::SocketResume(sock, in_buf, task_group_);
 
-    if (need_rearm) {
+    if (keep_io_ref) {
          LOG(INFO) << "need rearm, sock " << (void *)sock;
          guard.release();
     }
