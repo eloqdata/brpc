@@ -182,7 +182,7 @@ inline int Socket::Address(SocketId id, SocketUniquePtr* ptr) {
 }
 
 inline void Socket::ReAddress(SocketUniquePtr* ptr) {
-    LOG(INFO) << "Readdress " << (void *)ptr;
+    LOG(INFO) << "Readdress " << (void *)this;
     _versioned_ref.fetch_add(1, butil::memory_order_acquire);
     ptr->reset(this);
 }
