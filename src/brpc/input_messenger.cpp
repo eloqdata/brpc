@@ -396,7 +396,9 @@ void InputMessenger::OnNewMessages(Socket* m) {
 }
 #ifdef IO_URING_ENABLED
 void InputMessenger::OnNewMessagesFromRing(Socket *m) {
-    LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] " << (void *)m;
+    uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
+    LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] start nref="
+              << brpc::NRefOfVRef(vr_before) << ", version:" << brpc::VersionOfVRef(vr_before) << ", sock " << (void *)m;
     // Notes:
     // - If the socket has only one message, the message will be parsed and
     //   processed in this bthread. nova-pbrpc and http works in this way.
@@ -455,6 +457,9 @@ void InputMessenger::OnNewMessagesFromRing(Socket *m) {
         m->SetEOF();
     }
     m->ClearInboundBuf();
+    uint64_t vr_end` = sock->_versioned_ref.load(std::memory_order_relaxed);
+    LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] end nref="
+              << brpc::NRefOfVRef(vr_end) << ", version:" << brpc::VersionOfVRef(vr_end) << ", sock " << (void *)m;
     LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] exit " << (void *)m;
 }
 #endif
