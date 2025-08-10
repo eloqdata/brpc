@@ -1327,6 +1327,7 @@ int TaskGroup::SocketFixedWrite(brpc::Socket *sock, uint16_t ring_buf_idx, uint3
   // is post-processed. The socket needs to be deferenced when
   // post-processing the write request.
   brpc::SocketUniquePtr ptr_for_async_write;
+  LOG(INFO) << "FixedWrite";
   sock->ReAddress(&ptr_for_async_write);
 
   int ret = ring_listener_->SubmitFixedWrite(sock, ring_buf_idx, ring_buf_size);
@@ -1344,6 +1345,7 @@ int TaskGroup::SocketNonFixedWrite(brpc::Socket *sock) {
   // is post-processed. The socket needs to be deferenced when
   // post-processing the write request.
   brpc::SocketUniquePtr ptr_for_async_write;
+    LOG(INFO) << "NonFixedWrite";
   sock->ReAddress(&ptr_for_async_write);
 
   int ret = ring_listener_->SubmitNonFixedWrite(sock);

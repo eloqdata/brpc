@@ -678,6 +678,7 @@ int Socket::ResetFileDescriptor(int fd, size_t bound_gid) {
         attr = BTHREAD_ATTR_NORMAL;
 
         SocketUniquePtr socket_uptr;
+        LOG(INFO) << "ResetFileD"
         ReAddress(&socket_uptr);
         (void)socket_uptr.release();
         // Start bthread that continously processes messages of this socket.
@@ -1462,6 +1463,7 @@ void Socket::SocketResume(Socket *sock, InboundRingBuf &rbuf,
   sock->in_bufs_.emplace_back(rbuf.bytes_, rbuf.buf_id_, rbuf.need_rearm_);
   if (prev_empty) {
       SocketUniquePtr add_ref;
+      LOG(INFO) << "SocketResume";
       sock->ReAddress(&add_ref);
       add_ref.release();
       uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
@@ -1692,6 +1694,7 @@ int Socket::ConnectIfNot(const timespec* abstime, WriteRequest* req) {
 
     // Have to hold a reference for `req'
     SocketUniquePtr s;
+    LOG(INFO) << "ConnectIfNot";
     ReAddress(&s);
     req->socket = s.get();
     if (_conn) {
@@ -2130,6 +2133,7 @@ int Socket::StartWrite(WriteRequest* req, const WriteOptions& opt) {
     }
 
 KEEPWRITE_IN_BACKGROUND:
+    LOG(INFO) << "StartWrite";
     ReAddress(&ptr_for_keep_write);
     req->socket = ptr_for_keep_write.release();
     if (bthread_start_background(&th, &BTHREAD_ATTR_NORMAL,

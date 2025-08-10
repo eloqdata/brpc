@@ -288,6 +288,7 @@ int InputMessenger::ProcessNewMessage(
             LOG(ERROR) << "process of index=" << index << " is NULL";
             continue;
         }
+        LOG(INFO) << "ProcessNewMessage Readdress";
         m->ReAddress(&msg->_socket);
         m->PostponeEOF();
         msg->_process = _handlers[index].process;
