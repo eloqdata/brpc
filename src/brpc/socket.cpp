@@ -2672,7 +2672,7 @@ int Socket::StartInputEvent(SocketId id, uint32_t events,
 
 void DereferenceSocket(Socket* s) {
     if (s) {
-        LOG(INFO) << "DererfenceSocket () call Dereference()" << (void *)this;
+        LOG(INFO) << "DererfenceSocket () call Dereference()" << (void *)s;
         s->Dereference();
     }
 }
