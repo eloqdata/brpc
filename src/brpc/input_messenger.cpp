@@ -457,7 +457,7 @@ void InputMessenger::OnNewMessagesFromRing(Socket *m) {
         m->SetEOF();
     }
     m->ClearInboundBuf();
-    uint64_t vr_end` = sock->_versioned_ref.load(std::memory_order_relaxed);
+    uint64_t vr_end = sock->_versioned_ref.load(std::memory_order_relaxed);
     LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] end nref="
               << brpc::NRefOfVRef(vr_end) << ", version:" << brpc::VersionOfVRef(vr_end) << ", sock " << (void *)m;
     LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] exit " << (void *)m;
