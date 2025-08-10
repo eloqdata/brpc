@@ -437,6 +437,7 @@ void InputMessenger::OnNewMessagesFromRing(Socket *m) {
                     m->SetFailed(err, "Fail to read from %s: %s",
                              m->description().c_str(), berror(err));
                     m->ClearInboundBuf();
+                    LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] set failed" << (void *)m;
                     return;
                 }
             }
@@ -445,6 +446,7 @@ void InputMessenger::OnNewMessagesFromRing(Socket *m) {
         if (m->_rdma_state == Socket::RDMA_OFF && messenger->ProcessNewMessage(
                     m, nr, read_eof, received_us, base_realtime, last_msg) < 0) {
             m->ClearInboundBuf();
+            LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] rdma failed" << (void *)m;
             return;
         }
     }
@@ -453,6 +455,7 @@ void InputMessenger::OnNewMessagesFromRing(Socket *m) {
         m->SetEOF();
     }
     m->ClearInboundBuf();
+    LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] exit" << (void *)m;
 }
 #endif
 
