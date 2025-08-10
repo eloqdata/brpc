@@ -441,11 +441,11 @@ void InputMessenger::OnNewMessagesFromRing(Socket *m) {
                 int err = -nr;
                 errno = err;
                 if (err != EAGAIN && err != EINTR && err != ENOBUFS) {
+                    LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] set failed" << (void *)m;
                     PLOG(WARNING) << "Fail to read from " << *m;
                     m->SetFailed(err, "Fail to read from %s: %s",
                              m->description().c_str(), berror(err));
                     m->ClearInboundBuf();
-                    LOG(INFO) << "[InputMessenger::OnNewMessagesFromRing] set failed" << (void *)m;
                     return;
                 }
             }
