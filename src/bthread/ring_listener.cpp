@@ -612,7 +612,7 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
 void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
     uint64_t vr_before = sock->_versioned_ref.load(std::memory_order_relaxed);
     LOG(INFO) << "[HandleRecv] nref="
-              << brpc::NRefOfVRef(vr_before) << ", sock " << (void *)sock;
+              << brpc::NRefOfVRef(vr_before) << ", version:" << brpc::VersionOfVRef(vr_before) << ", sock " << (void *)sock;
     brpc::SocketUniquePtr guard(sock);
     int32_t nw = cqe->res;
     uint16_t buf_id = UINT16_MAX;
@@ -662,7 +662,12 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
     if (!need_rearm) {
          LOG(INFO) << "need rearm, sock " << (void *)sock;
          guard.release();
+    } else {
+        LOG(INFO) << "not need rearm, sock " << (void *)sock;
     }
+    uint64_t vr_end = sock->_versioned_ref.load(std::memory_order_relaxed);
+    LOG(INFO) << "[HandleRecv end] nref="
+              << brpc::NRefOfVRef(vr_end) << ", version:" << brpc::VersionOfVRef(vr_end) << ", sock " << (void *)sock;
     LOG(INFO) << "[HandleRecv] return at end" << ", sock " << (void *)sock;
 }
 
