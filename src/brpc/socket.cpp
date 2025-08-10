@@ -1391,7 +1391,7 @@ void *Socket::SocketProcess(void *arg) {
     SocketUniquePtr s_uptr{sock};
     */
     SocketUniquePtr guard(sock);
-    ReAddress(&guard);
+    sock->ReAddress(&guard);
 
     uint64_t vr_after = sock->_versioned_ref.load(std::memory_order_relaxed);
     LOG(INFO) << "[SocketPrecess] after nref="
