@@ -1013,6 +1013,7 @@ int Socket::ReleaseAdditionalReference() {
             REF_RECYCLED,
             butil::memory_order_relaxed,
             butil::memory_order_relaxed)) {
+            LOG(INFO) << "ReleaseAddtionalReference() call Dereference()" << (void *)this;
             return Dereference();
         }
 
@@ -2671,6 +2672,7 @@ int Socket::StartInputEvent(SocketId id, uint32_t events,
 
 void DereferenceSocket(Socket* s) {
     if (s) {
+        LOG(INFO) << "DererfenceSocket () call Dereference()" << (void *)this;
         s->Dereference();
     }
 }
