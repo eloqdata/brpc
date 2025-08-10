@@ -615,7 +615,6 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
     int32_t nw = cqe->res;
     uint16_t buf_id = UINT16_MAX;
     bool need_rearm = false;
-    bool keep_io_ref = false;
 
     CHECK(sock != nullptr);
 
@@ -653,14 +652,13 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
         if (!(cqe->flags & IORING_CQE_F_MORE)) {
             LOG(INFO) << "[HandleRecv] cqe more" << ", sock " << (void *)sock;
             need_rearm = true;
-            keep_io_ref = true;
         }
     }
 
     InboundRingBuf in_buf{sock, nw, buf_id, need_rearm};
     brpc::Socket::SocketResume(sock, in_buf, task_group_);
 
-    if (keep_io_ref) {
+    if (need_rearm) {
          guard.release();
     }
     /*
