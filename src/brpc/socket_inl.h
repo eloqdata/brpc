@@ -66,11 +66,11 @@ inline SocketOptions::SocketOptions()
 {}
 
 inline int Socket::Dereference() {
-    LOG(INFO) << "Dereference() called " << (void *)this;
     const SocketId id = _this_id;
     const uint64_t vref = _versioned_ref.fetch_sub(
         1, butil::memory_order_release);
     const int32_t nref = NRefOfVRef(vref);
+    LOG(INFO) << "Dereference() called " << (void *)this << "nref=" << nref;
     if (nref > 1) {
         return 0;
     }
