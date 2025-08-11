@@ -157,6 +157,7 @@ int RingListener::Register(SocketRegisterData *data) {
 }
 
 int RingListener::SubmitRecv(brpc::Socket *sock) {
+    LOG(INFO) << "SubmitRecv :" << *sock;
     io_uring_sqe *sqe = io_uring_get_sqe(&ring_);
     if (sqe == nullptr) {
         LOG(ERROR) << "IO uring submission queue is full for the inbound "
