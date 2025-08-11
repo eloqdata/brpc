@@ -552,10 +552,10 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
                 free_reg_fd_idx_.emplace_back(sock->reg_fd_idx_);
                 sock->reg_fd_idx_ = -1;
             }
+            sock->bound_g_ = task_group_;
             int ret = SubmitRecv(sock);
             if (ret == 0) {
                 reg_fds_.try_emplace(sock->fd(), sock->reg_fd_idx_);
-                sock->bound_g_ = task_group_;
                 register_data->Notify(true);
             } else {
                 // SubmitRecv fails, no sqe available. Unregister the sock.
