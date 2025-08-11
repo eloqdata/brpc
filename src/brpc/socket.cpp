@@ -677,9 +677,6 @@ int Socket::ResetFileDescriptor(int fd, size_t bound_gid) {
         bthread_attr_t attr;
         attr = BTHREAD_ATTR_NORMAL;
 
-        SocketUniquePtr socket_uptr;
-        ReAddress(&socket_uptr);
-        (void)socket_uptr.release();
         // Start bthread that continously processes messages of this socket.
         bthread_t tid;
         attr.keytable_pool = _keytable_pool;
@@ -1336,7 +1333,6 @@ void *Socket::SocketRegister(void *arg) {
     SocketRegisterData *data = static_cast<SocketRegisterData *>(arg);
 
     Socket *sock = data->sock_;
-    SocketUniquePtr s_uptr{sock};
 
     int reg_ret = cur_group->RegisterSocket(data);
     if (reg_ret < 0) {
