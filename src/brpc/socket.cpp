@@ -1250,7 +1250,7 @@ void Socket::OnRecycle() {
                 if (res < 0) {
                     LOG(ERROR) << "SocketUnRegister failed: " << res << " sock: " << *this;
                 }
-                LOG(INFO) << "OnRecycle bound_g_ = nullptr";
+                LOG(INFO) << "OnRecycle bound_g_ = nullptr, sock:" << *this;
                 bound_g_ = nullptr;
                 reg_fd_idx_ = -1;
                 reg_fd_ = -1;
