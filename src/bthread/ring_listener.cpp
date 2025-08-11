@@ -563,6 +563,7 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
                     free_reg_fd_idx_.emplace_back(sock->reg_fd_idx_);
                     sock->reg_fd_idx_ = -1;
                 }
+                LOG(INFO) << "RegisterFile bound_g_ = nullptr";
                 sock->bound_g_ = nullptr;
                 register_data->Notify(false);
             }

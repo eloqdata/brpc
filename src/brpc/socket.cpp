@@ -1250,6 +1250,7 @@ void Socket::OnRecycle() {
                 if (res < 0) {
                     LOG(ERROR) << "SocketUnRegister failed: " << res << " sock: " << *this;
                 }
+                LOG(INFO) << "OnRecycle bound_g_ = nullptr";
                 bound_g_ = nullptr;
                 reg_fd_idx_ = -1;
                 reg_fd_ = -1;
@@ -1340,6 +1341,7 @@ void *Socket::SocketRegister(void *arg) {
     if (reg_ret < 0) {
         LOG(ERROR) << "Failed to register the socket " << *sock
                    << " to the IO uring listener.";
+        LOG(INFO) << "RegisterSocket bound_g_ = nullptr";
         sock->bound_g_ = nullptr;
         sock->reg_fd_idx_ = -1;
         sock->reg_fd_ = -1;
