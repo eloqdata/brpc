@@ -554,6 +554,7 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
             }
             sock->bound_g_ = task_group_;
             int ret = SubmitRecv(sock);
+            LOG(INFO) << "SubmitRecv HandleCqe sock:" << *sock;
             if (ret == 0) {
                 reg_fds_.try_emplace(sock->fd(), sock->reg_fd_idx_);
                 register_data->Notify(true);

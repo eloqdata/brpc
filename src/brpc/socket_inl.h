@@ -111,6 +111,8 @@ inline int Socket::Dereference() {
                     butil::memory_order_acquire,
                     butil::memory_order_relaxed)) {
 #ifdef IO_URING_ENABLED
+                SocketUniquePtr test_ptr;
+                CHECK(Address(id, &test_ptr) < 0) << "Address must fail";
                 bool success = RecycleInBackgroundIfNecessary();
                 if (!success) {
                     LOG(INFO) << "!RecycleInBackgroundIfNecessary OnRecycle";
