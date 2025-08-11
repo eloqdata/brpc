@@ -1316,6 +1316,7 @@ int TaskGroup::UnregisterSocket(SocketUnRegisterData *data) {
 }
 
 void TaskGroup::SocketRecv(brpc::Socket *sock) {
+    LOG(INFO) << "SocketRecv SubmitRecv, sock:" << *sock;
   ring_listener_->SubmitRecv(sock);
 }
 

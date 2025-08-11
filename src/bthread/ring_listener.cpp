@@ -128,6 +128,7 @@ int RingListener::Register(SocketRegisterData *data) {
     if (free_reg_fd_idx_.empty()) {
         // All registered file slots have been taken. Cannot register the socket's
         // fd.
+        LOG(INFO) << "Register SubmitRecv, sock:" << *sock;
         ret = SubmitRecv(sock);
         if (ret < 0) {
             return -1;
@@ -650,6 +651,8 @@ void RingListener::HandleBacklog() {
             OpCode op = IntToOpCode(data & UINT8_MAX);
             switch (op) {
                 case OpCode::Recv:
+                    LOG(INFO) << "SubmitRecv:" << *sock;
+                    CHECK(sock->bound_g_ != nullptr) << "SubmitRecv bound_g_ == nullptr";
                     SubmitRecv(sock);
                     break;
                 case OpCode::FixedWriteFinish:
