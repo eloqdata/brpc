@@ -116,6 +116,7 @@ int RingListener::Register(SocketRegisterData *data) {
             return -1;
         }
         // reg_fd already stored.
+        LOG(INFO) << "Register error set bound_g_, sock:" << *sock;
         sock->bound_g_ = task_group_;
         data->Notify(true);
         return 0;
@@ -132,6 +133,7 @@ int RingListener::Register(SocketRegisterData *data) {
             return -1;
         }
         reg_fds_.try_emplace(fd, -1);
+        LOG(INFO) << "Register set bound_g_, sock:" << *sock;
         sock->bound_g_ = task_group_;
         data->Notify(true);
     } else {
@@ -552,6 +554,7 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
                 free_reg_fd_idx_.emplace_back(sock->reg_fd_idx_);
                 sock->reg_fd_idx_ = -1;
             }
+            LOG(INFO) << "HandleCqe set bound_g_, sock:" << *sock;
             sock->bound_g_ = task_group_;
             int ret = SubmitRecv(sock);
             LOG(INFO) << "SubmitRecv HandleCqe sock:" << *sock;
