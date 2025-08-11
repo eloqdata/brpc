@@ -522,7 +522,7 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
                 LOG(INFO) << "socket is invalid, socket id: " << socket_id;
                 delete recv_data;
             } else {
-                // LOG(INFO) << "HandleRecv: " << socket_id;
+                LOG(INFO) << "HandleRecv: " << *ptr;
                 HandleRecv(std::move(ptr), cqe);
                 // if (HandleRecv(std::move(ptr), cqe))
                 //    delete recv_data;
