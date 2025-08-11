@@ -1200,6 +1200,7 @@ int Socket::Status(SocketId id, int32_t* nref) {
 }
 
 void Socket::OnRecycle() {
+    LOG(INFO) << "OnRecycle";
     const bool create_by_connect = CreatedByConnect();
     if (_app_connect) {
         std::shared_ptr<AppConnect> tmp;
@@ -1352,6 +1353,7 @@ void *Socket::SocketRegister(void *arg) {
 }
 
 void *Socket::SocketUnRegister(void *arg) {
+    LOG(INFO) << "SocketUnRegister";
     bthread::TaskGroup *cur_group = bthread::tls_task_group;
     SocketUnRegisterData *data = static_cast<SocketUnRegisterData *>(arg);
     int res = cur_group->UnregisterSocket(data);
@@ -1369,7 +1371,7 @@ void *Socket::SocketRecycle(void *arg) {
     return nullptr;
 }
 
-void Socket::SocketResume(Socket *sock, InboundRingBuf &rbuf,
+void Socket::SocketResume(SocketUniquePtr sock, InboundRingBuf &rbuf,
                           bthread::TaskGroup *group) {
   if (sock->_on_edge_triggered_events == nullptr || sock->fd() < 0) {
     if (rbuf.bytes_ > 0) {
@@ -3387,7 +3389,7 @@ void Socket::ProcessInbound() {
   bthread_t tid;
   attr.keytable_pool = _keytable_pool;
   bthread::TaskGroup *cur_group = bthread::TaskGroup::VolatileTLSTaskGroup();
-  CHECK(bound_g_ == cur_group) << "cur_group: " << cur_group << " bound_g_: " << bound_g_;
+  CHECK(bound_g_ == cur_group) << "cur_group: " << cur_group << " bound_g_: " << bound_g_ << " socket: " << this;
   // TODO(zkl): No need to signal itself
   if (bthread_start_from_bound_group(cur_group->group_id_, &tid, &attr, SocketProcess, this) != 0) {
     LOG(FATAL) << "Fail to start SocketProcess";
@@ -3452,6 +3454,7 @@ bool Socket::RecycleInBackgroundIfNecessary() {
         bthread_attr_t attr;
         attr = BTHREAD_ATTR_NORMAL;
         attr.keytable_pool = _keytable_pool;
+        LOG(INFO) << "RecycleInBackgroundIfNecessary";
         if (bthread_start_from_bound_group(bound_g_->group_id_, &tid, &attr, SocketRecycle, this) != 0) {
             LOG(FATAL) << "Fail to start SocketProcess";
             SocketRecycle(this);

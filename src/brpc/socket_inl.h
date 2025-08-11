@@ -113,6 +113,7 @@ inline int Socket::Dereference() {
 #ifdef IO_URING_ENABLED
                 bool success = RecycleInBackgroundIfNecessary();
                 if (!success) {
+                    LOG(INFO) << "!RecycleInBackgroundIfNecessary OnRecycle";
                     OnRecycle();
                     return_resource(SlotOfSocketId(id));
                 }

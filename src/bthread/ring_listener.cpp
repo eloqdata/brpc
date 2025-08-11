@@ -164,9 +164,12 @@ int RingListener::SubmitRecv(brpc::Socket *sock) {
     int fd_idx = sock->reg_fd_idx_;
     int sfd = fd_idx >= 0 ? fd_idx : sock->fd();
     io_uring_prep_recv_multishot(sqe, sfd, NULL, 0, 0);
-    uint64_t data = reinterpret_cast<uint64_t>(sock);
+    SocketRecvData *recv_data = new SocketRecvData();
+    recv_data->socket_id_ = sock->id();
+    uint64_t data = reinterpret_cast<uint64_t>(recv_data);
     data = data << 16;
     data |= OpCodeToInt(OpCode::Recv);
+    // LOG(INFO) << "submit socket id=" << recv_data->socket_id_;
     io_uring_sqe_set_data64(sqe, data);
 
     sqe->buf_group = 0;
@@ -508,8 +511,20 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
 
     switch (op) {
         case OpCode::Recv: {
-            brpc::Socket *sock = reinterpret_cast<brpc::Socket *>(data >> 16);
-            HandleRecv(sock, cqe);
+            const SocketRecvData *recv_data = reinterpret_cast<SocketRecvData *>(data >> 16);
+            const brpc::SocketId socket_id = recv_data->socket_id_;
+            brpc::SocketUniquePtr ptr;
+
+            if (brpc::Socket::Address(socket_id, &ptr) < 0) {
+                LOG(INFO) << "socket is invalid, socket id: " << socket_id;
+                delete recv_data;
+            } else {
+                // LOG(INFO) << "HandleRecv: " << socket_id;
+                HandleRecv(std::move(ptr), cqe);
+                // if (HandleRecv(std::move(ptr), cqe))
+                //    delete recv_data;
+            }
+
             break;
         }
         case OpCode::CancelRecv: {
@@ -575,7 +590,7 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
     }
 }
 
-void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
+bool RingListener::HandleRecv(brpc::SocketUniquePtr sock, io_uring_cqe *cqe) {
     int32_t nw = cqe->res;
     uint16_t buf_id = UINT16_MAX;
     bool need_rearm = false;
@@ -588,9 +603,9 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
             // There aren't enough buffers for the recv request. Retries the
             // request.
             uint64_t data = OpCodeToInt(OpCode::Recv);
-            bool success = SubmitBacklog(sock, data);
+            bool success = SubmitBacklog(sock.get(), data);
             if (success) {
-                return;
+                return need_rearm;
             }
         }
 
@@ -615,8 +630,9 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
         }
     }
 
-    InboundRingBuf in_buf{sock, nw, buf_id, need_rearm};
-    brpc::Socket::SocketResume(sock, in_buf, task_group_);
+    InboundRingBuf in_buf{sock.get(), nw, buf_id, need_rearm};
+    brpc::Socket::SocketResume(std::move(sock), in_buf, task_group_);
+    return need_rearm;
 }
 
 void RingListener::HandleBacklog() {
