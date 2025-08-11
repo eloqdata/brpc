@@ -782,6 +782,7 @@ int Socket::Create(const SocketOptions& options, SocketId* id) {
         LOG(FATAL) << "Fail to get_resource<Socket>";
         return -1;
     }
+    LOG(INFO) << "Create Socket:" << m;
     g_vars->nsocket << 1;
     CHECK(NULL == m->_shared_part.load(butil::memory_order_relaxed));
     m->_nevent.store(0, butil::memory_order_relaxed);
@@ -3391,7 +3392,7 @@ void Socket::ProcessInbound() {
   bthread_t tid;
   attr.keytable_pool = _keytable_pool;
   bthread::TaskGroup *cur_group = bthread::TaskGroup::VolatileTLSTaskGroup();
-  CHECK(bound_g_ == cur_group) << "cur_group: " << cur_group << " bound_g_: " << bound_g_ << " socket: " << this;
+  CHECK(bound_g_ == cur_group) << "cur_group: " << cur_group << " bound_g_: " << bound_g_ << " socket: " << *this;
   // TODO(zkl): No need to signal itself
   if (bthread_start_from_bound_group(cur_group->group_id_, &tid, &attr, SocketProcess, this) != 0) {
     LOG(FATAL) << "Fail to start SocketProcess";
