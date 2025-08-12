@@ -48,7 +48,12 @@ RingListener::~RingListener() {
 }
 
 int RingListener::Init() {
-    int ret = io_uring_queue_init(1024, &ring_, IORING_SETUP_SINGLE_ISSUER);
+    struct io_uring_params params;
+    memset(&params, 0, sizeof(params));
+    params.flags      = IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_CQSIZE;
+    params.cq_entries = 2048;                 // 目标 CQE 数
+    unsigned sq_entries = 1024;               // 原来的 SQ 深度
+    int ret = io_uring_queue_init_params(sq_entries, &ring_, &params);
 
     if (ret < 0) {
         LOG(WARNING) << "Failed to initialize the IO uring of the inbound "
