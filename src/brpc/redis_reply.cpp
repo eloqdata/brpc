@@ -24,8 +24,8 @@
 
 namespace brpc {
 
-DEFINE_int32(redis_max_allocation_size, 64 * 1024 * 1024, 
-             "Maximum memory allocation size in bytes for a single redis request or reply (64MB by default)");
+DEFINE_int32(redis_max_allocation_size, 256 * 1024 * 1024,
+             "Maximum memory allocation size in bytes for a single redis request or reply (256MB by default)");
 
 //BAIDU_CASSERT(sizeof(RedisReply) == 24, size_match);
 const int RedisReply::npos = -1;
