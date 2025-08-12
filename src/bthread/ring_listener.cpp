@@ -513,9 +513,7 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
             const brpc::SocketId socket_id = recv_data->socket_id_;
             brpc::SocketUniquePtr ptr;
 
-            if (brpc::Socket::Address(socket_id, &ptr) < 0) {
-                LOG(INFO) << "socket is invalid, socket id: " << socket_id;
-            } else {
+            if (brpc::Socket::Address(socket_id, &ptr) == 0) {
                 HandleRecv(std::move(ptr), cqe);
             }
             if (!(cqe->flags & IORING_CQE_F_MORE)) {

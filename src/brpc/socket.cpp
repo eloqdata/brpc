@@ -3319,7 +3319,7 @@ void Socket::RingNonFixedWriteCb(int nw) {
         // ring_buf is not null if this is a fixed write of the socket.
         if (req->ring_buf_data.ring_buf != nullptr) {
             // Handle registered buffer write.
-            CHECK(req->ring_buf_data.ring_buf_size >= nw);
+            CHECK(req->ring_buf_data.ring_buf_size >= static_cast<uint32_t>(nw));
             req->ring_buf_data.pop_front(nw);
             bthread::TaskGroup *group = bthread::tls_task_group;
             // The fixed write must be submitted by the same group.
@@ -3409,7 +3409,7 @@ void Socket::NotifyWaitingNonFixedWrite(int nw) {
 
 int Socket::CopyDataRead() {
     bthread::TaskGroup *cur_group = bound_g_;
-    CHECK(buf_idx_ < in_bufs_.size());
+    CHECK(static_cast<uint64_t>(buf_idx_) < in_bufs_.size());
     auto &rbuf = in_bufs_[buf_idx_];
     int nw = rbuf.bytes_;
     if (rbuf.bytes_ > 0) {
@@ -3431,7 +3431,7 @@ int Socket::CopyDataRead() {
 void Socket::ClearInboundBuf() {
     bthread::TaskGroup *cur_group = bthread::tls_task_group;
     CHECK(cur_group == bound_g_);
-    for (; buf_idx_ < in_bufs_.size(); ++buf_idx_) {
+    for (; static_cast<uint64_t>(buf_idx_) < in_bufs_.size(); ++buf_idx_) {
         auto &buf = in_bufs_[buf_idx_];
         if (buf.buf_id_ != UINT16_MAX) {
             cur_group->RecycleRingReadBuf(buf.buf_id_, buf.bytes_);
