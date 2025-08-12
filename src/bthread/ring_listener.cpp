@@ -82,8 +82,11 @@ int RingListener::Init() {
     if (in_buf_ring_ == nullptr) {
         LOG(WARNING) << "Failed to register buffer ring for the inbound listener.";
         Close();
-        return -1;
+        return ret;
     }
+
+    LOG(INFO) << "SQ=" << params.sq_entries << " CQ=" << params.cq_entries
+              << " features=0x" << std::hex << params.features;
 
     char *ptr = in_buf_;
     // inbound_ring_size must be the power of 2.
