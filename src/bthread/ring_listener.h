@@ -87,6 +87,13 @@ struct SocketRegisterData {
     }
 };
 
+struct SocketRecvData {
+    explicit SocketRecvData(const brpc::SocketId socket_id): socket_id_(socket_id) {
+    }
+
+    brpc::SocketId socket_id_;
+};
+
 struct SocketUnRegisterData {
     int fd_;
     int32_t fd_idx_;
@@ -186,6 +193,7 @@ private:
     }
 
     int SubmitRegisterFile(SocketRegisterData *register_data, int *fd, int32_t fd_idx);
+
     int SubmitCancel(SocketUnRegisterData *unregister_data);
 
     void HandleCqe(io_uring_cqe *cqe);
@@ -254,7 +262,7 @@ private:
         }
     }
 
-    void HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe);
+    void HandleRecv(brpc::SocketUniquePtr sock, io_uring_cqe *cqe);
 
     void HandleBacklog();
 

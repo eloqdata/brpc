@@ -677,9 +677,6 @@ int Socket::ResetFileDescriptor(int fd, size_t bound_gid) {
         bthread_attr_t attr;
         attr = BTHREAD_ATTR_NORMAL;
 
-        SocketUniquePtr socket_uptr;
-        ReAddress(&socket_uptr);
-        (void)socket_uptr.release();
         // Start bthread that continously processes messages of this socket.
         bthread_t tid;
         attr.keytable_pool = _keytable_pool;
@@ -1330,10 +1327,9 @@ void *Socket::SocketProcess(void *arg) {
 void *Socket::SocketRegister(void *arg) {
     bthread::TaskGroup *cur_group = bthread::tls_task_group;
 
-    SocketRegisterData *data = static_cast<SocketRegisterData *>(arg);
+    auto *data = static_cast<SocketRegisterData *>(arg);
 
     Socket *sock = data->sock_;
-    SocketUniquePtr s_uptr{sock};
 
     int reg_ret = cur_group->RegisterSocket(data);
     if (reg_ret < 0) {
@@ -1369,7 +1365,7 @@ void *Socket::SocketRecycle(void *arg) {
     return nullptr;
 }
 
-void Socket::SocketResume(Socket *sock, InboundRingBuf &rbuf,
+void Socket::SocketResume(SocketUniquePtr sock, InboundRingBuf &rbuf,
                           bthread::TaskGroup *group) {
   if (sock->_on_edge_triggered_events == nullptr || sock->fd() < 0) {
     if (rbuf.bytes_ > 0) {
@@ -3387,7 +3383,7 @@ void Socket::ProcessInbound() {
   bthread_t tid;
   attr.keytable_pool = _keytable_pool;
   bthread::TaskGroup *cur_group = bthread::TaskGroup::VolatileTLSTaskGroup();
-  CHECK(bound_g_ == cur_group) << "cur_group: " << cur_group << " bound_g_: " << bound_g_;
+  CHECK(bound_g_ == cur_group) << "cur_group: " << cur_group << " bound_g_: " << bound_g_ << " socket: " << *this;
   // TODO(zkl): No need to signal itself
   if (bthread_start_from_bound_group(cur_group->group_id_, &tid, &attr, SocketProcess, this) != 0) {
     LOG(FATAL) << "Fail to start SocketProcess";
