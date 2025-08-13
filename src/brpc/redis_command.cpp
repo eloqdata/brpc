@@ -24,9 +24,6 @@
 
 namespace brpc {
 constexpr size_t CTX_WIDTH = 5;
-} // namespace
-
-namespace brpc {
 
 DECLARE_int32(redis_max_allocation_size);
 
