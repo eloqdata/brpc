@@ -513,8 +513,14 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
             const brpc::SocketId socket_id = recv_data->socket_id_;
             brpc::SocketUniquePtr ptr;
 
-            if (brpc::Socket::Address(socket_id, &ptr) == 0) {
+            if (brpc::Socket::Address(socket_id, &ptr) == 0 && ptr->fd() != -1) {
                 HandleRecv(std::move(ptr), cqe);
+            } else {
+                if (cqe->flags & IORING_CQE_F_BUFFER) {
+                    uint16_t buf_id = cqe->flags >> IORING_CQE_BUFFER_SHIFT;
+                    int32_t nw = cqe->res;
+                    task_group_->RecycleRingReadBuf(buf_id, nw);
+                }
             }
             if (!(cqe->flags & IORING_CQE_F_MORE)) {
                 delete recv_data;

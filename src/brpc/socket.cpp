@@ -1377,7 +1377,7 @@ void Socket::SocketResume(SocketUniquePtr sock, InboundRingBuf &rbuf,
   bool prev_empty = sock->in_bufs_.empty();
   sock->in_bufs_.emplace_back(rbuf.bytes_, rbuf.buf_id_, rbuf.need_rearm_);
   if (prev_empty) {
-    sock->ProcessInbound();
+    sock->ProcessInbound(std::move(sock));
   }
 }
 #endif
@@ -3372,23 +3372,22 @@ FAIL_TO_WRITE:
     return;
 }
 
-void Socket::ProcessInbound() {
-  bthread_attr_t attr;
-  attr = BTHREAD_ATTR_NORMAL;
+void Socket::ProcessInbound(SocketUniquePtr socket_uptr) {
+    bthread_attr_t attr;
+    attr = BTHREAD_ATTR_NORMAL;
 
-  SocketUniquePtr socket_uptr;
-  ReAddress(&socket_uptr);
-  (void)socket_uptr.release();
-  // Start bthread that continously processes messages of this socket.
-  bthread_t tid;
-  attr.keytable_pool = _keytable_pool;
-  bthread::TaskGroup *cur_group = bthread::TaskGroup::VolatileTLSTaskGroup();
-  CHECK(bound_g_ == cur_group) << "cur_group: " << cur_group << " bound_g_: " << bound_g_ << " socket: " << *this;
-  // TODO(zkl): No need to signal itself
-  if (bthread_start_from_bound_group(cur_group->group_id_, &tid, &attr, SocketProcess, this) != 0) {
-    LOG(FATAL) << "Fail to start SocketProcess";
-    SocketProcess(this);
-  }
+    // socket_uptr will be dereferenced by SocketProcess
+    (void)socket_uptr.release();
+    // Start bthread that continously processes messages of this socket.
+    bthread_t tid;
+    attr.keytable_pool = _keytable_pool;
+    bthread::TaskGroup *cur_group = bthread::TaskGroup::VolatileTLSTaskGroup();
+    CHECK(bound_g_ == cur_group) << "cur_group: " << cur_group << " bound_g_: " << bound_g_ << " socket: " << *this;
+    // TODO(zkl): No need to signal itself
+    if (bthread_start_from_bound_group(cur_group->group_id_, &tid, &attr, SocketProcess, this) != 0) {
+        LOG(FATAL) << "Fail to start SocketProcess";
+        SocketProcess(this);
+    }
 }
 
 int Socket::WaitForNonFixedWrite() {

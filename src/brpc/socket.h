@@ -636,7 +636,7 @@ public:
 
 #ifdef IO_URING_ENABLED
     void RingNonFixedWriteCb(int nw);
-    void ProcessInbound();
+    void ProcessInbound(SocketUniquePtr socket_uptr);
     int WaitForNonFixedWrite();
     void NotifyWaitingNonFixedWrite(int nw);
     int CopyDataRead();
