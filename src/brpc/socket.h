@@ -486,7 +486,7 @@ public:
     static int StartInputEvent(SocketId id, uint32_t events,
                                const bthread_attr_t& thread_attr);
 #ifdef IO_URING_ENABLED
-    static void SocketResume(Socket *sock, InboundRingBuf &rbuf,
+    static void SocketResume(SocketUniquePtr sock, InboundRingBuf &rbuf,
                              bthread::TaskGroup *group);
 #endif
 
@@ -636,7 +636,7 @@ public:
 
 #ifdef IO_URING_ENABLED
     void RingNonFixedWriteCb(int nw);
-    void ProcessInbound();
+    void ProcessInbound(SocketUniquePtr socket_uptr);
     int WaitForNonFixedWrite();
     void NotifyWaitingNonFixedWrite(int nw);
     int CopyDataRead();

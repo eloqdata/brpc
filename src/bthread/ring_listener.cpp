@@ -164,7 +164,8 @@ int RingListener::SubmitRecv(brpc::Socket *sock) {
     int fd_idx = sock->reg_fd_idx_;
     int sfd = fd_idx >= 0 ? fd_idx : sock->fd();
     io_uring_prep_recv_multishot(sqe, sfd, NULL, 0, 0);
-    uint64_t data = reinterpret_cast<uint64_t>(sock);
+    auto *recv_data = new SocketRecvData(sock->id());
+    auto data = reinterpret_cast<uint64_t>(recv_data);
     data = data << 16;
     data |= OpCodeToInt(OpCode::Recv);
     io_uring_sqe_set_data64(sqe, data);
@@ -508,8 +509,22 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
 
     switch (op) {
         case OpCode::Recv: {
-            brpc::Socket *sock = reinterpret_cast<brpc::Socket *>(data >> 16);
-            HandleRecv(sock, cqe);
+            const SocketRecvData *recv_data = reinterpret_cast<SocketRecvData *>(data >> 16);
+            const brpc::SocketId socket_id = recv_data->socket_id_;
+            brpc::SocketUniquePtr ptr;
+
+            if (brpc::Socket::Address(socket_id, &ptr) == 0 && ptr->fd() != -1) {
+                HandleRecv(std::move(ptr), cqe);
+            } else {
+                if (cqe->flags & IORING_CQE_F_BUFFER) {
+                    uint16_t buf_id = cqe->flags >> IORING_CQE_BUFFER_SHIFT;
+                    int32_t nw = cqe->res;
+                    task_group_->RecycleRingReadBuf(buf_id, nw);
+                }
+            }
+            if (!(cqe->flags & IORING_CQE_F_MORE)) {
+                delete recv_data;
+            }
             break;
         }
         case OpCode::CancelRecv: {
@@ -537,10 +552,10 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
                 free_reg_fd_idx_.emplace_back(sock->reg_fd_idx_);
                 sock->reg_fd_idx_ = -1;
             }
+            sock->bound_g_ = task_group_;
             int ret = SubmitRecv(sock);
             if (ret == 0) {
                 reg_fds_.try_emplace(sock->fd(), sock->reg_fd_idx_);
-                sock->bound_g_ = task_group_;
                 register_data->Notify(true);
             } else {
                 // SubmitRecv fails, no sqe available. Unregister the sock.
@@ -575,7 +590,7 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
     }
 }
 
-void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
+void RingListener::HandleRecv(brpc::SocketUniquePtr sock, io_uring_cqe *cqe) {
     int32_t nw = cqe->res;
     uint16_t buf_id = UINT16_MAX;
     bool need_rearm = false;
@@ -588,8 +603,7 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
             // There aren't enough buffers for the recv request. Retries the
             // request.
             uint64_t data = OpCodeToInt(OpCode::Recv);
-            bool success = SubmitBacklog(sock, data);
-            if (success) {
+            if (SubmitBacklog(sock.get(), data)) {
                 return;
             }
         }
@@ -615,8 +629,8 @@ void RingListener::HandleRecv(brpc::Socket *sock, io_uring_cqe *cqe) {
         }
     }
 
-    InboundRingBuf in_buf{sock, nw, buf_id, need_rearm};
-    brpc::Socket::SocketResume(sock, in_buf, task_group_);
+    InboundRingBuf in_buf{sock.get(), nw, buf_id, need_rearm};
+    brpc::Socket::SocketResume(std::move(sock), in_buf, task_group_);
 }
 
 void RingListener::HandleBacklog() {

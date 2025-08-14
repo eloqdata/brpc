@@ -677,9 +677,6 @@ int Socket::ResetFileDescriptor(int fd, size_t bound_gid) {
         bthread_attr_t attr;
         attr = BTHREAD_ATTR_NORMAL;
 
-        SocketUniquePtr socket_uptr;
-        ReAddress(&socket_uptr);
-        (void)socket_uptr.release();
         // Start bthread that continously processes messages of this socket.
         bthread_t tid;
         attr.keytable_pool = _keytable_pool;
@@ -1330,10 +1327,9 @@ void *Socket::SocketProcess(void *arg) {
 void *Socket::SocketRegister(void *arg) {
     bthread::TaskGroup *cur_group = bthread::tls_task_group;
 
-    SocketRegisterData *data = static_cast<SocketRegisterData *>(arg);
+    auto *data = static_cast<SocketRegisterData *>(arg);
 
     Socket *sock = data->sock_;
-    SocketUniquePtr s_uptr{sock};
 
     int reg_ret = cur_group->RegisterSocket(data);
     if (reg_ret < 0) {
@@ -1369,7 +1365,7 @@ void *Socket::SocketRecycle(void *arg) {
     return nullptr;
 }
 
-void Socket::SocketResume(Socket *sock, InboundRingBuf &rbuf,
+void Socket::SocketResume(SocketUniquePtr sock, InboundRingBuf &rbuf,
                           bthread::TaskGroup *group) {
   if (sock->_on_edge_triggered_events == nullptr || sock->fd() < 0) {
     if (rbuf.bytes_ > 0) {
@@ -1381,7 +1377,7 @@ void Socket::SocketResume(Socket *sock, InboundRingBuf &rbuf,
   bool prev_empty = sock->in_bufs_.empty();
   sock->in_bufs_.emplace_back(rbuf.bytes_, rbuf.buf_id_, rbuf.need_rearm_);
   if (prev_empty) {
-    sock->ProcessInbound();
+    sock->ProcessInbound(std::move(sock));
   }
 }
 #endif
@@ -3323,7 +3319,7 @@ void Socket::RingNonFixedWriteCb(int nw) {
         // ring_buf is not null if this is a fixed write of the socket.
         if (req->ring_buf_data.ring_buf != nullptr) {
             // Handle registered buffer write.
-            CHECK(req->ring_buf_data.ring_buf_size >= nw);
+            CHECK(req->ring_buf_data.ring_buf_size >= static_cast<uint32_t>(nw));
             req->ring_buf_data.pop_front(nw);
             bthread::TaskGroup *group = bthread::tls_task_group;
             // The fixed write must be submitted by the same group.
@@ -3376,23 +3372,22 @@ FAIL_TO_WRITE:
     return;
 }
 
-void Socket::ProcessInbound() {
-  bthread_attr_t attr;
-  attr = BTHREAD_ATTR_NORMAL;
+void Socket::ProcessInbound(SocketUniquePtr socket_uptr) {
+    bthread_attr_t attr;
+    attr = BTHREAD_ATTR_NORMAL;
 
-  SocketUniquePtr socket_uptr;
-  ReAddress(&socket_uptr);
-  (void)socket_uptr.release();
-  // Start bthread that continously processes messages of this socket.
-  bthread_t tid;
-  attr.keytable_pool = _keytable_pool;
-  bthread::TaskGroup *cur_group = bthread::TaskGroup::VolatileTLSTaskGroup();
-  CHECK(bound_g_ == cur_group) << "cur_group: " << cur_group << " bound_g_: " << bound_g_;
-  // TODO(zkl): No need to signal itself
-  if (bthread_start_from_bound_group(cur_group->group_id_, &tid, &attr, SocketProcess, this) != 0) {
-    LOG(FATAL) << "Fail to start SocketProcess";
-    SocketProcess(this);
-  }
+    // socket_uptr will be dereferenced by SocketProcess
+    (void)socket_uptr.release();
+    // Start bthread that continously processes messages of this socket.
+    bthread_t tid;
+    attr.keytable_pool = _keytable_pool;
+    bthread::TaskGroup *cur_group = bthread::TaskGroup::VolatileTLSTaskGroup();
+    CHECK(bound_g_ == cur_group) << "cur_group: " << cur_group << " bound_g_: " << bound_g_ << " socket: " << *this;
+    // TODO(zkl): No need to signal itself
+    if (bthread_start_from_bound_group(cur_group->group_id_, &tid, &attr, SocketProcess, this) != 0) {
+        LOG(FATAL) << "Fail to start SocketProcess";
+        SocketProcess(this);
+    }
 }
 
 int Socket::WaitForNonFixedWrite() {
@@ -3413,7 +3408,7 @@ void Socket::NotifyWaitingNonFixedWrite(int nw) {
 
 int Socket::CopyDataRead() {
     bthread::TaskGroup *cur_group = bound_g_;
-    CHECK(buf_idx_ < in_bufs_.size());
+    CHECK(static_cast<uint64_t>(buf_idx_) < in_bufs_.size());
     auto &rbuf = in_bufs_[buf_idx_];
     int nw = rbuf.bytes_;
     if (rbuf.bytes_ > 0) {
@@ -3435,7 +3430,7 @@ int Socket::CopyDataRead() {
 void Socket::ClearInboundBuf() {
     bthread::TaskGroup *cur_group = bthread::tls_task_group;
     CHECK(cur_group == bound_g_);
-    for (; buf_idx_ < in_bufs_.size(); ++buf_idx_) {
+    for (; static_cast<uint64_t>(buf_idx_) < in_bufs_.size(); ++buf_idx_) {
         auto &buf = in_bufs_[buf_idx_];
         if (buf.buf_id_ != UINT16_MAX) {
             cur_group->RecycleRingReadBuf(buf.buf_id_, buf.bytes_);

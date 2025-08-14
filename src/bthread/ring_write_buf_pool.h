@@ -53,7 +53,7 @@ public:
                 perror("getrlimit");
                 LOG(ERROR) << "getrlimit fails";
             } else {
-                int32_t rlim_cur = rl.rlim_cur;
+                const uint32_t rlim_cur = rl.rlim_cur;
                 rl.rlim_cur = 128 * 1024 * 1024;
                 if (rl.rlim_cur > rl.rlim_max) {
                     rl.rlim_cur = rl.rlim_max;
