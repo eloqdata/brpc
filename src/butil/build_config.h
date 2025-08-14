@@ -173,6 +173,6 @@
 #define nullptr NULL
 #endif
 
-#define HAVE_DLADDR
+#define BRPC_HAVE_DLADDR
 
 #endif  // BUTIL_BUILD_CONFIG_H_
