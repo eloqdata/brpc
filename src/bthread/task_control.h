@@ -91,7 +91,7 @@ public:
 
 #ifdef IO_URING_ENABLED
     RingModule* get_ring_module() {
-        return &ring_module_;
+        return ring_module_.get();
     }
 #endif
 
@@ -134,7 +134,7 @@ private:
     std::atomic<int> _parking_lot_num{0};
     ParkingLot _pl[PARKING_LOT_NUM];
 #ifdef IO_URING_ENABLED
-    RingModule ring_module_;
+    std::shared_ptr<RingModule> ring_module_{std::make_shared<RingModule>()};
 #endif
 };
 

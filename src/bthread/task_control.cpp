@@ -300,7 +300,7 @@ TaskControl::~TaskControl() {
     _status.hide();
 #ifdef IO_URING_ENABLED
     if (FLAGS_use_io_uring) {
-        unregister_module(&ring_module_);
+        unregister_module(ring_module_);
     }
 #endif
 
@@ -332,10 +332,10 @@ int TaskControl::_add_group(TaskGroup* g) {
         CHECK(_parking_lot_num.load() == int(_ngroup.load()));
 #ifdef IO_URING_ENABLED
         if (FLAGS_use_io_uring) {
-            ring_module_.AddListener(ngroup, g->ring_listener_.get());
+            ring_module_->AddListener(ngroup, g->ring_listener_.get());
             if (ngroup == 0) {
                 // The first group worker registers the RingModule.
-                register_module(&ring_module_);
+                register_module(ring_module_);
             }
         }
 #endif
