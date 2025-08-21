@@ -1278,7 +1278,7 @@ bool TaskGroup::HasTasks() {
         return true;
     }
     bool has_task = std::any_of(registered_modules_.begin(), registered_modules_.end(),
-        [this](eloq::EloqModule* module) {
+        [this](const std::shared_ptr<eloq::EloqModule> &module) {
             return module != nullptr && module->HasTask(group_id_);
     });
 
