@@ -44,7 +44,7 @@
 #include "bthread/ring_listener.h"
 #endif
 
-std::array<eloq::EloqModule *, 10> registered_modules;
+std::array<std::shared_ptr<eloq::EloqModule>, 10> registered_modules;
 std::atomic<int> registered_module_cnt;
 
 DEFINE_int32(steal_task_rnd, 100, "Steal task frequency in wait_task");
@@ -1262,11 +1262,11 @@ void TaskGroup::ProcessModulesTask() {
 
     int new_modules_cnt = modules_cnt_;
     for (int i = old_modules_cnt; i < new_modules_cnt; ++i) {
-        eloq::EloqModule *module = registered_modules_[i];
+        eloq::EloqModule *module = registered_modules_[i].get();
         module->ExtThdStart(group_id_);
     }
 
-    for (auto *module : registered_modules_) {
+    for (auto &module : registered_modules_) {
         if (module != nullptr) {
             module->Process(group_id_);
         }
@@ -1287,6 +1287,7 @@ bool TaskGroup::HasTasks() {
 
 void TaskGroup::CheckAndUpdateModules() {
     if (modules_cnt_ != registered_module_cnt.load(std::memory_order_acquire)) {
+        LOG(INFO) << "CheckAndUpdateModules";
         registered_modules_ = registered_modules;
         modules_cnt_ = std::count_if(registered_modules_.begin(), registered_modules_.end(), [](eloq::EloqModule* module) {
             return module != nullptr;
@@ -1295,8 +1296,9 @@ void TaskGroup::CheckAndUpdateModules() {
 }
 
 void TaskGroup::NotifyRegisteredModules(WorkerStatus status) {
-    for (eloq::EloqModule *module : registered_modules_) {
+    for (auto &module : registered_modules_) {
         if (module != nullptr) {
+            LOG(INFO) << "NotifyRegisterModules:" << module;
             if (status == WorkerStatus::Sleep) {
                 module->ExtThdEnd(group_id_);
             } else {

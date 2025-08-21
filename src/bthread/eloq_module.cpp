@@ -18,17 +18,19 @@
  */
 
 #include "eloq_module.h"
+
+#include <memory>
 #include "bthread/bthread.h"
 
-extern std::array<eloq::EloqModule *, 10> registered_modules;
+extern std::array<std::shared_ptr<eloq::EloqModule>, 10> registered_modules;
 extern std::atomic<int> registered_module_cnt;
 
 namespace eloq {
-    bool EloqModule::NotifyWorker(int thd_id) {
+    bool EloqModule::NotifyWorker(const int thd_id) {
         return bthread_notify_worker(thd_id);
     }
 
-    int register_module(EloqModule *module) {
+    int register_module(const std::shared_ptr<EloqModule> &module) {
         static std::mutex module_mutex;
         std::unique_lock<std::mutex> lk(module_mutex);
         size_t i = 0;
@@ -42,7 +44,7 @@ namespace eloq {
         return 0;
     }
 
-    int unregister_module(EloqModule *module) {
+    int unregister_module(const std::shared_ptr<EloqModule> &module) {
         static std::mutex module_mutex;
         std::unique_lock<std::mutex> lk(module_mutex);
         size_t i = 0;
