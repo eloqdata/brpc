@@ -1289,7 +1289,7 @@ void TaskGroup::CheckAndUpdateModules() {
     if (modules_cnt_ != registered_module_cnt.load(std::memory_order_acquire)) {
         LOG(INFO) << "CheckAndUpdateModules";
         registered_modules_ = registered_modules;
-        modules_cnt_ = std::count_if(registered_modules_.begin(), registered_modules_.end(), [](eloq::EloqModule* module) {
+        modules_cnt_ = std::count_if(registered_modules_.begin(), registered_modules_.end(), [](const std::shared_ptr<eloq::EloqModule>& module) {
             return module != nullptr;
         });
     }
