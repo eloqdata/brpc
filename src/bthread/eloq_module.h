@@ -20,6 +20,8 @@
 #ifndef ELOQ_MODULE_H
 #define ELOQ_MODULE_H
 
+#include <memory>
+
 namespace eloq {
     class EloqModule {
     public:
@@ -59,9 +61,9 @@ namespace eloq {
         static bool NotifyWorker(int thd_id);
     };
 
-    extern int register_module(EloqModule *module);
+    extern int register_module(const std::shared_ptr<EloqModule> &module);
 
-    extern int unregister_module(EloqModule *module);
+    extern int unregister_module(const std::shared_ptr<EloqModule> &module);
 } // namespace eloq
 
 #endif //ELOQ_MODULE_H
