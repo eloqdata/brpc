@@ -1287,7 +1287,6 @@ bool TaskGroup::HasTasks() {
 
 void TaskGroup::CheckAndUpdateModules() {
     if (modules_cnt_ != registered_module_cnt.load(std::memory_order_acquire)) {
-        LOG(INFO) << "CheckAndUpdateModules";
         registered_modules_ = registered_modules;
         modules_cnt_ = std::count_if(registered_modules_.begin(), registered_modules_.end(), [](const std::shared_ptr<eloq::EloqModule>& module) {
             return module != nullptr;
@@ -1298,7 +1297,6 @@ void TaskGroup::CheckAndUpdateModules() {
 void TaskGroup::NotifyRegisteredModules(WorkerStatus status) {
     for (auto &module : registered_modules_) {
         if (module != nullptr) {
-            LOG(INFO) << "NotifyRegisterModules:" << module;
             if (status == WorkerStatus::Sleep) {
                 module->ExtThdEnd(group_id_);
             } else {
