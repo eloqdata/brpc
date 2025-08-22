@@ -20,6 +20,7 @@
 #ifndef ELOQ_MODULE_H
 #define ELOQ_MODULE_H
 
+#include <atomic>
 #include <memory>
 
 namespace eloq {
@@ -59,6 +60,8 @@ namespace eloq {
          * @return true if the worker is running or successfully notified.
          */
         static bool NotifyWorker(int thd_id);
+
+        std::atomic<bool> module_stopped_{false};
     };
 
     extern int register_module(const std::shared_ptr<EloqModule> &module);

@@ -54,6 +54,7 @@ namespace eloq {
         if (i == registered_modules.size()) {
             return 0;
         }
+        registered_modules[i]->module_stopped_.store(true, std::memory_order_release);
         CHECK(i < registered_module_cnt);
         while (i < registered_modules.size() - 1) {
             registered_modules[i] = registered_modules[i + 1];
