@@ -278,7 +278,6 @@ TaskGroup::TaskGroup(TaskControl* c)
 }
 
 TaskGroup::~TaskGroup() {
-    LOG(INFO) << "TaskGroup::~TaskGroup(" << group_id_ << ")";
     if (_main_tid) {
         TaskMeta* m = address_meta(_main_tid);
         CHECK(_main_stack == m->stack);
