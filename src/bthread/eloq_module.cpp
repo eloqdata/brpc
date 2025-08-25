@@ -18,12 +18,28 @@
  */
 
 #include "eloq_module.h"
+
+#include "task_control.h"
 #include "bthread/bthread.h"
 
+extern "C" {
+    bthread::TaskControl* bthread_get_task_control();
+}
 extern std::array<eloq::EloqModule *, 10> registered_modules;
 extern std::atomic<int> registered_module_cnt;
 
 namespace eloq {
+    void EloqModule::CheckIfModuleIsQuiting(int group_id) {
+        if (quit_.load(std::memory_order_acquire) != 1) {
+            return;
+        }
+        workers_unseen_quit_.fetch_sub(1, std::memory_order_relaxed);
+
+        while (quit_.load(std::memory_order_relaxed) != 2) {
+            bthread_usleep(1000);
+        }
+    }
+
     bool EloqModule::NotifyWorker(int thd_id) {
         return bthread_notify_worker(thd_id);
     }
@@ -44,7 +60,18 @@ namespace eloq {
 
     int unregister_module(EloqModule *module) {
         static std::mutex module_mutex;
-        std::unique_lock<std::mutex> lk(module_mutex);
+        std::unique_lock lk(module_mutex);
+
+        CHECK(module->quit_.load(std::memory_order_relaxed) == 0);
+        auto concurrency = bthread_get_task_control()->concurrency();
+        module->workers_unseen_quit_.store(concurrency, std::memory_order_release);
+        module->quit_.store(1, std::memory_order_release);
+        while (module->workers_unseen_quit_.load(std::memory_order_acquire) != 0) {
+            bthread_usleep(1000);
+            for (int i = 0; i < concurrency; ++i) {
+                EloqModule::NotifyWorker(i);
+            }
+        }
         size_t i = 0;
         while (i < registered_modules.size() && registered_modules[i] != module) {
             i++;
@@ -58,6 +85,7 @@ namespace eloq {
             i++;
         }
         registered_module_cnt.fetch_sub(1, std::memory_order_release);
+        module->quit_.store(2, std::memory_order_release);
         return 0;
     }
 } // namespace eloq

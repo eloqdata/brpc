@@ -487,10 +487,16 @@ void TaskControl::signal_task(int num_task) {
 
 
 void TaskControl::signal_group(int group_id) {
+    if (_groups[group_id] == nullptr) {
+        return;
+    }
     return _groups[group_id]->Notify();
 }
 
 bool TaskControl::signal_group_if_waiting(int group_id) {
+    if (_groups[group_id] == nullptr) {
+        return false;
+    }
     return _groups[group_id]->NotifyIfWaiting();
 }
 
