@@ -1247,8 +1247,8 @@ bool TaskGroup::Wait(){
             return true;
         }
 
-        // Check any new module registered before checking modules' tasks.
-        CheckAndUpdateModules(false);
+        // Check any module registered or deleted before checking modules' tasks.
+        CheckAndUpdateModules();
         return HasTasks();
     });
     _waiting.store(false, std::memory_order_release);
@@ -1286,23 +1286,25 @@ bool TaskGroup::HasTasks() {
     return has_task;
 }
 
-void TaskGroup::CheckAndUpdateModules(const bool check_quit) {
-    if (check_quit) {
-        for (int i = 0; i < modules_cnt_; ++i) {
-            auto module = registered_modules_[i];
-            CHECK(module != nullptr);
-            module->CheckIfModuleIsQuiting(group_id_);
-        }
-    }
+void TaskGroup::CheckAndUpdateModules() {
     if (modules_cnt_ != registered_module_cnt.load(std::memory_order_acquire)) {
+        std::unique_lock lk(eloq::module_mutex);
+        const auto old_registered_modules = registered_modules_;
         registered_modules_ = registered_modules;
-        auto new_module_cnt = std::count_if(registered_modules_.begin(), registered_modules_.end(), [](eloq::EloqModule* module) {
+        lk.unlock();
+        const auto new_module_cnt = std::count_if(registered_modules_.begin(), registered_modules_.end(), [](eloq::EloqModule* module) {
             return module != nullptr;
         });
+        // new modules
         for (auto i = modules_cnt_; i < new_module_cnt; ++i) {
-           registered_modules_[i]->registered_workers_.fetch_add(1, std::memory_order_relaxed);
+            registered_modules_[i]->registered_workers_.fetch_add(1, std::memory_order_relaxed);
         }
-        modules_cnt_ = new_module_cnt;
+        // deleted modules
+        for (auto i = new_module_cnt; i < modules_cnt_; ++i) {
+            old_registered_modules[i]->workers_unseen_quit_.fetch_sub(1, std::memory_order_relaxed);
+        }
+
+        modules_cnt_ = static_cast<int>(new_module_cnt);
     }
 }
 

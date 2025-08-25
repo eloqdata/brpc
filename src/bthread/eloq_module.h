@@ -21,8 +21,10 @@
 #define ELOQ_MODULE_H
 
 #include <atomic>
+#include <mutex>
 
 namespace eloq {
+    inline std::mutex module_mutex;
     class EloqModule {
     public:
         virtual ~EloqModule() = default;
@@ -59,14 +61,7 @@ namespace eloq {
          */
         static bool NotifyWorker(int thd_id);
 
-        /**
-         * For synchronization between register and unregister.
-         */
-        void CheckIfModuleIsQuiting(int group_id);
-
         std::atomic<int> registered_workers_{0};
-        // 0 means running, 1 means quiting, 2 means already quit
-        std::atomic<int> quit_{0};
         std::atomic<int> workers_unseen_quit_{0};
     };
 

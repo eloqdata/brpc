@@ -304,7 +304,7 @@ public:
 
     bool HasTasks();
 
-    void CheckAndUpdateModules(bool check_quit = true);
+    void CheckAndUpdateModules();
 
     enum struct WorkerStatus
     {

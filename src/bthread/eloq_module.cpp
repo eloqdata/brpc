@@ -29,24 +29,12 @@ extern std::array<eloq::EloqModule *, 10> registered_modules;
 extern std::atomic<int> registered_module_cnt;
 
 namespace eloq {
-    void EloqModule::CheckIfModuleIsQuiting(int group_id) {
-        if (quit_.load(std::memory_order_acquire) != 1) {
-            return;
-        }
-        workers_unseen_quit_.fetch_sub(1, std::memory_order_relaxed);
-
-        while (quit_.load(std::memory_order_relaxed) != 2) {
-            bthread_usleep(1000);
-        }
-    }
-
     bool EloqModule::NotifyWorker(int thd_id) {
         return bthread_notify_worker(thd_id);
     }
 
     int register_module(EloqModule *module) {
-        static std::mutex module_mutex;
-        std::unique_lock<std::mutex> lk(module_mutex);
+        std::unique_lock lk(module_mutex);
         size_t i = 0;
         while (i < registered_modules.size() && registered_modules[i] != nullptr) {
             // Each module should only be registered once.
@@ -59,19 +47,23 @@ namespace eloq {
     }
 
     int unregister_module(EloqModule *module) {
-        static std::mutex module_mutex;
-        std::unique_lock lk(module_mutex);
-
-        CHECK(module->quit_.load(std::memory_order_relaxed) == 0);
-        auto concurrency = bthread_get_task_control()->concurrency();
-        module->workers_unseen_quit_.store(concurrency, std::memory_order_release);
-        module->quit_.store(1, std::memory_order_release);
-        while (module->workers_unseen_quit_.load(std::memory_order_acquire) != 0) {
-            bthread_usleep(1000);
-            for (int i = 0; i < concurrency; ++i) {
-                EloqModule::NotifyWorker(i);
+        const auto concurrency = bthread_get_task_control()->concurrency();
+        while (true) {
+            bool need_notify_workers = false;
+            for (auto i = 0; i < registered_module_cnt; ++i) {
+                if (registered_modules[i]->registered_workers_.load(std::memory_order_acquire) != concurrency) {
+                    need_notify_workers = true;
+                    break;
+                }
             }
+            if (!need_notify_workers)
+                break;
+            for (int thd_id = 0; thd_id < concurrency; ++thd_id) {
+                EloqModule::NotifyWorker(thd_id);
+            }
+            bthread_usleep(1000);
         }
+        std::unique_lock lk(module_mutex);
         size_t i = 0;
         while (i < registered_modules.size() && registered_modules[i] != module) {
             i++;
@@ -85,7 +77,15 @@ namespace eloq {
             i++;
         }
         registered_module_cnt.fetch_sub(1, std::memory_order_release);
-        module->quit_.store(2, std::memory_order_release);
+        lk.unlock();
+
+        module->workers_unseen_quit_.store(concurrency, std::memory_order_release);
+        while (module->workers_unseen_quit_.load(std::memory_order_acquire) != 0) {
+            bthread_usleep(1000);
+            for (int thd_id = 0; thd_id < concurrency; ++thd_id) {
+                EloqModule::NotifyWorker(thd_id);
+            }
+        }
         return 0;
     }
 } // namespace eloq
