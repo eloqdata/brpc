@@ -20,11 +20,14 @@
 #ifndef ELOQ_MODULE_H
 #define ELOQ_MODULE_H
 
+#include <atomic>
+#include <mutex>
+
 namespace eloq {
+    inline std::mutex module_mutex;
     class EloqModule {
     public:
-        virtual ~EloqModule() {
-        }
+        virtual ~EloqModule() = default;
 
         /**
          * This func is called when worker starts running.
@@ -52,11 +55,14 @@ namespace eloq {
         virtual bool HasTask(int thd_id) const = 0;
 
         /**
-         * This func is for the module to wakeup the worker.
+         * This func is for the module to wake up the worker.
          * @param thd_id
          * @return true if the worker is running or successfully notified.
          */
         static bool NotifyWorker(int thd_id);
+
+        std::atomic<int> registered_workers_{0};
+        std::atomic<int> workers_unseen_quit_{0};
     };
 
     extern int register_module(EloqModule *module);

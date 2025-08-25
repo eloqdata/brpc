@@ -18,8 +18,13 @@
  */
 
 #include "eloq_module.h"
+
+#include "task_control.h"
 #include "bthread/bthread.h"
 
+extern "C" {
+    bthread::TaskControl* bthread_get_task_control();
+}
 extern std::array<eloq::EloqModule *, 10> registered_modules;
 extern std::atomic<int> registered_module_cnt;
 
@@ -29,8 +34,7 @@ namespace eloq {
     }
 
     int register_module(EloqModule *module) {
-        static std::mutex module_mutex;
-        std::unique_lock<std::mutex> lk(module_mutex);
+        std::unique_lock lk(module_mutex);
         size_t i = 0;
         while (i < registered_modules.size() && registered_modules[i] != nullptr) {
             // Each module should only be registered once.
@@ -43,8 +47,23 @@ namespace eloq {
     }
 
     int unregister_module(EloqModule *module) {
-        static std::mutex module_mutex;
-        std::unique_lock<std::mutex> lk(module_mutex);
+        const auto concurrency = bthread_get_task_control()->concurrency();
+        while (true) {
+            bool need_notify_workers = false;
+            for (auto i = 0; i < registered_module_cnt; ++i) {
+                if (registered_modules[i]->registered_workers_.load(std::memory_order_acquire) != concurrency) {
+                    need_notify_workers = true;
+                    break;
+                }
+            }
+            if (!need_notify_workers)
+                break;
+            for (int thd_id = 0; thd_id < concurrency; ++thd_id) {
+                EloqModule::NotifyWorker(thd_id);
+            }
+            bthread_usleep(1000);
+        }
+        std::unique_lock lk(module_mutex);
         size_t i = 0;
         while (i < registered_modules.size() && registered_modules[i] != module) {
             i++;
@@ -58,6 +77,15 @@ namespace eloq {
             i++;
         }
         registered_module_cnt.fetch_sub(1, std::memory_order_release);
+        lk.unlock();
+
+        module->workers_unseen_quit_.store(concurrency, std::memory_order_release);
+        while (module->workers_unseen_quit_.load(std::memory_order_acquire) != 0) {
+            bthread_usleep(1000);
+            for (int thd_id = 0; thd_id < concurrency; ++thd_id) {
+                EloqModule::NotifyWorker(thd_id);
+            }
+        }
         return 0;
     }
 } // namespace eloq
