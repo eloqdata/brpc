@@ -47,6 +47,9 @@ namespace eloq {
     }
 
     int unregister_module(EloqModule *module) {
+        // unregister_module sequentially.
+        static std::mutex unregister_mutex;
+        std::unique_lock unregister_lock(unregister_mutex);
         const auto concurrency = bthread_get_task_control()->concurrency();
         while (true) {
             bool need_notify_workers = false;
@@ -76,12 +79,12 @@ namespace eloq {
             registered_modules[i] = registered_modules[i + 1];
             i++;
         }
+        module->workers_unseen_quit_.fetch_add(concurrency, std::memory_order_relaxed);
         registered_module_cnt.fetch_sub(1, std::memory_order_release);
         lk.unlock();
 
-        module->workers_unseen_quit_.store(concurrency, std::memory_order_release);
         while (module->workers_unseen_quit_.load(std::memory_order_acquire) != 0) {
-            bthread_usleep(1000);
+            bthread_usleep(5000);
             for (int thd_id = 0; thd_id < concurrency; ++thd_id) {
                 EloqModule::NotifyWorker(thd_id);
             }
