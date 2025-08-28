@@ -79,11 +79,10 @@ namespace eloq {
             registered_modules[i] = registered_modules[i + 1];
             i++;
         }
-        module->workers_unseen_quit_.fetch_add(concurrency, std::memory_order_relaxed);
         registered_module_cnt.fetch_sub(1, std::memory_order_release);
         lk.unlock();
 
-        while (module->workers_unseen_quit_.load(std::memory_order_acquire) != 0) {
+        while (module->registered_workers_.load(std::memory_order_acquire) != 0) {
             bthread_usleep(5000);
             for (int thd_id = 0; thd_id < concurrency; ++thd_id) {
                 EloqModule::NotifyWorker(thd_id);

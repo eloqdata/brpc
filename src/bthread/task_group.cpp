@@ -1287,7 +1287,7 @@ bool TaskGroup::HasTasks() {
 
 void TaskGroup::CheckAndUpdateModules() {
     if (modules_cnt_ != registered_module_cnt.load(std::memory_order_acquire)) {
-        std::unique_lock lk(eloq::module_mutex);
+        std::shared_lock lk(eloq::module_mutex);
         const auto old_registered_modules = registered_modules_;
         registered_modules_ = registered_modules;
         lk.unlock();
@@ -1300,7 +1300,7 @@ void TaskGroup::CheckAndUpdateModules() {
         }
         // deleted modules
         for (auto i = new_module_cnt; i < modules_cnt_; ++i) {
-            old_registered_modules[i]->workers_unseen_quit_.fetch_sub(1, std::memory_order_relaxed);
+            old_registered_modules[i]->registered_workers_.fetch_sub(1, std::memory_order_relaxed);
         }
 
         modules_cnt_ = static_cast<int>(new_module_cnt);

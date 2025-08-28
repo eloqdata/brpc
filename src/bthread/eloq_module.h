@@ -21,10 +21,10 @@
 #define ELOQ_MODULE_H
 
 #include <atomic>
-#include <mutex>
+#include <shared_mutex>
 
 namespace eloq {
-    inline std::mutex module_mutex;
+    inline std::shared_mutex module_mutex;
     class EloqModule {
     public:
         virtual ~EloqModule() = default;
@@ -62,7 +62,6 @@ namespace eloq {
         static bool NotifyWorker(int thd_id);
 
         std::atomic<int> registered_workers_{0};
-        std::atomic<int> workers_unseen_quit_{0};
     };
 
     extern int register_module(EloqModule *module);
