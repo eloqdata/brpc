@@ -47,7 +47,6 @@ namespace eloq {
     }
 
     int unregister_module(EloqModule *module) {
-        // unregister_module sequentially.
         const auto concurrency = bthread_get_task_control()->concurrency();
         while (module->registered_workers_.load(std::memory_order_acquire) != concurrency) {
             for (int thd_id = 0; thd_id < concurrency; ++thd_id) {
