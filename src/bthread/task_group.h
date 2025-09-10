@@ -348,6 +348,7 @@ public:
 
     inline static std::atomic<int> _waiting_workers{0};
     std::atomic<bool> _waiting{false};
+    std::atomic<bool> _notified{false};
     std::mutex _mux;
     std::condition_variable _cv;
 
