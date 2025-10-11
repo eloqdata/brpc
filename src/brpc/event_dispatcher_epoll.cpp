@@ -38,7 +38,7 @@ DECLARE_int32(bthread_concurrency);
 
 
 namespace brpc {
-DEFINE_bool(use_pthread_event_dispatcher, false,
+DEFINE_bool(use_pthread_event_dispatcher, true,
             "Use separate pthreads as event dispatcher to do epoll.");
 EventDispatcher::EventDispatcher()
     : _epfd(-1)
