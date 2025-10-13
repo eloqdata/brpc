@@ -327,11 +327,19 @@ int RingListener::SubmitAll() {
 
 void RingListener::PollAndNotify() {
     io_uring_cqe *cqe = nullptr;
-    int ret = io_uring_wait_cqe(&ring_, &cqe);
-    if (ret < 0) {
-        LOG(ERROR) << "Listener uring wait errno: " << ret;
-        return;
+    while (true) {
+        int ret = io_uring_wait_cqe(&ring_, &cqe);
+        if (ret == -EINTR || ret == -EAGAIN) {
+            continue;
+        }
+        if (ret < 0) {
+            LOG(ERROR) << "Listener uring wait errno: " << ret;
+            poll_status_.store(PollStatus::Sleep, std::memory_order_relaxed);
+            return;
+        }
+        break;
     }
+
     cqe_ready_.store(true, std::memory_order_relaxed);
     poll_status_.store(PollStatus::Sleep, std::memory_order_relaxed);
     RingModule::NotifyWorker(task_group_->group_id_);

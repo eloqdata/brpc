@@ -18,16 +18,31 @@
 #ifndef BUTIL_TEST_SSTREAM_WORKAROUND
 #define BUTIL_TEST_SSTREAM_WORKAROUND
 
-// defining private as public makes it fail to compile sstream with gcc5.x like this:
+// defining private as public also breaks libstdc++ headers (sstream, any, ...):
 // "error: ‘struct std::__cxx11::basic_stringbuf<_CharT, _Traits, _Alloc>::
 // __xfer_bufptrs’ redeclared with different access"
 
 #ifdef private
+# define BUTIL_TEST_RESTORE_PRIVATE
 # undef private
-# include <sstream>
+#endif
+
+#ifdef protected
+# define BUTIL_TEST_RESTORE_PROTECTED
+# undef protected
+#endif
+
+#include <sstream>
+#include <any>
+
+#ifdef BUTIL_TEST_RESTORE_PRIVATE
 # define private public
-#else
-# include <sstream>
+# undef BUTIL_TEST_RESTORE_PRIVATE
+#endif
+
+#ifdef BUTIL_TEST_RESTORE_PROTECTED
+# define protected public
+# undef BUTIL_TEST_RESTORE_PROTECTED
 #endif
 
 #endif  //  BUTIL_TEST_SSTREAM_WORKAROUND
