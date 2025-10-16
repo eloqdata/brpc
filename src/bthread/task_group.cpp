@@ -1312,8 +1312,19 @@ void TaskGroup::CheckAndUpdateModules() {
             registered_modules_[i]->registered_workers_.fetch_add(1, std::memory_order_relaxed);
         }
         // deleted modules
-        for (auto i = new_module_cnt; i < modules_cnt_; ++i) {
-            old_registered_modules[i]->registered_workers_.fetch_sub(1, std::memory_order_relaxed);
+        if (new_module_cnt < modules_cnt_) {
+            for (auto* old_m : old_registered_modules) {
+                bool found = false;
+                for (auto* new_m : registered_modules_) {
+                    if (new_m == old_m) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    old_m->registered_workers_.fetch_sub(1, std::memory_order_relaxed);
+                }
+            }
         }
 
         modules_cnt_ = static_cast<int>(new_module_cnt);
