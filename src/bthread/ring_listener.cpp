@@ -18,6 +18,14 @@
  */
 
 #ifdef IO_URING_ENABLED
+#include <cstdint>
+#include <errno.h>
+#include <cstring>
+#include <string>
+#include <sys/resource.h>
+
+#include <gflags/gflags.h>
+
 #include "brpc/socket.h"
 #include "bthread/task_group.h"
 #include "bthread/eloq_module.h"
@@ -26,6 +34,15 @@
 #include "butil/threading/platform_thread.h"
 
 #include "ring_listener.h"
+
+DEFINE_int32(io_uring_queue_entries, 1024,
+             "Number of entries requested when initializing the io_uring-based "
+             "inbound listener");
+DEFINE_int32(io_uring_registered_files, 1024,
+             "Number of sparse fixed-file slots reserved for the io_uring-based "
+             "inbound listener");
+DEFINE_int32(io_uring_write_buffer_pool_size, 1024,
+             "Number of buffers kept in the io_uring-based write buffer pool.");
 
 RingListener::~RingListener() {
     for (auto [fd, fd_idx]: reg_fds_) {
@@ -48,26 +65,122 @@ RingListener::~RingListener() {
 }
 
 int RingListener::Init() {
-    int ret = io_uring_queue_init(1024, &ring_, IORING_SETUP_SINGLE_ISSUER);
+    int32_t flag_entries = FLAGS_io_uring_queue_entries;
+    if (flag_entries <= 0) {
+        LOG(WARNING)
+            << "FLAGS_io_uring_queue_entries must be positive, "
+               "falling back to 64";
+        flag_entries = 64;
+    }
+    const int32_t max_entries = 16384;
+    if (flag_entries > max_entries) {
+        LOG(WARNING) << "FLAGS_io_uring_queue_entries exceeds "
+                     << max_entries << ", clamping to " << max_entries;
+        flag_entries = max_entries;
+    }
+    const unsigned queue_entries = static_cast<unsigned>(flag_entries);
+
+    int32_t flag_file_slots = FLAGS_io_uring_registered_files;
+    if (flag_file_slots <= 0) {
+        LOG(WARNING)
+            << "FLAGS_io_uring_registered_files must be positive, "
+               "falling back to 128";
+        flag_file_slots = 128;
+    }
+    const int32_t max_file_slots = 128 * 1024;
+    if (flag_file_slots > max_file_slots) {
+        LOG(WARNING) << "FLAGS_io_uring_registered_files exceeds "
+                     << max_file_slots << ", clamping to " << max_file_slots;
+        flag_file_slots = max_file_slots;
+    }
+    const unsigned file_slots = static_cast<unsigned>(flag_file_slots);
+
+    int32_t flag_write_buffers = FLAGS_io_uring_write_buffer_pool_size;
+    if (flag_write_buffers <= 0) {
+        LOG(WARNING)
+            << "FLAGS_io_uring_write_buffer_pool_size must be positive, "
+               "falling back to "
+            << 64;
+        flag_write_buffers = 64;
+    }
+    const int32_t max_write_buffers = 4096;
+    if (flag_write_buffers > max_write_buffers) {
+        LOG(WARNING) << "FLAGS_io_uring_write_buffer_pool_size exceeds "
+                     << max_write_buffers << ", clamping to " << max_write_buffers;
+        flag_write_buffers = max_write_buffers;
+    }
+
+    const unsigned write_buf_slots = static_cast<unsigned>(flag_write_buffers);
+
+    int ret = io_uring_queue_init(queue_entries, &ring_, IORING_SETUP_SINGLE_ISSUER);
 
     if (ret < 0) {
         LOG(WARNING) << "Failed to initialize the IO uring of the inbound "
                   "listener, errno: "
                << ret;
+        if (ret == -ENOMEM) {
+            rlimit memlock_limit;
+            if (getrlimit(RLIMIT_MEMLOCK, &memlock_limit) == 0) {
+                std::string soft_limit = memlock_limit.rlim_cur == RLIM_INFINITY
+                                             ? "unlimited"
+                                             : std::to_string(static_cast<unsigned long long>(memlock_limit.rlim_cur));
+                std::string hard_limit = memlock_limit.rlim_max == RLIM_INFINITY
+                                             ? "unlimited"
+                                             : std::to_string(static_cast<unsigned long long>(memlock_limit.rlim_max));
+                LOG(WARNING) << "io_uring_queue_init returned -ENOMEM. "
+                             << "Queue entries request: " << queue_entries << ". "
+                             << "Current RLIMIT_MEMLOCK soft=" << soft_limit
+                             << " hard=" << hard_limit
+                             << ". Raise the limit (e.g. `ulimit -l` or systemd "
+                             << "LimitMEMLOCK) or lower the FLAGS_io_uring_queue_entries.";
+            } else {
+                const int saved_errno = errno;
+                LOG(WARNING) << "Failed to query RLIMIT_MEMLOCK, errno: "
+                             << saved_errno;
+            }
+        }
         Close();
         return ret;
     }
     ring_init_ = true;
 
-    ret = io_uring_register_files_sparse(&ring_, 1024);
+    ret = io_uring_register_files_sparse(&ring_, file_slots);
     if (ret < 0) {
-        LOG(WARNING) << "Failed to register sparse files for the inbound listener.";
+        const int err = -ret;
+        LOG(WARNING) << "Failed to register sparse files for the inbound listener, "
+                     << "errno: " << err << " (" << strerror(err) << ")";
+        if (ret == -ENOMEM) {
+            rlimit memlock_limit;
+            if (getrlimit(RLIMIT_MEMLOCK, &memlock_limit) == 0) {
+                std::string soft_limit = memlock_limit.rlim_cur == RLIM_INFINITY
+                                             ? "unlimited"
+                                             : std::to_string(static_cast<unsigned long long>(memlock_limit.rlim_cur));
+                std::string hard_limit = memlock_limit.rlim_max == RLIM_INFINITY
+                                             ? "unlimited"
+                                             : std::to_string(static_cast<unsigned long long>(memlock_limit.rlim_max));
+                LOG(WARNING) << "io_uring_register_files_sparse encountered ENOMEM. "
+                             << "Requested file slots: " << file_slots << ". "
+                             << "Current RLIMIT_MEMLOCK soft=" << soft_limit
+                             << " hard=" << hard_limit
+                             << ". Raise the limit or reduce "
+                                "FLAGS_io_uring_registered_files.";
+            } else {
+                const int saved_errno = errno;
+                LOG(WARNING) << "Failed to query RLIMIT_MEMLOCK while handling "
+                                "io_uring_register_files_sparse failure, errno: "
+                             << saved_errno;
+            }
+        } else if (ret == -EMFILE) {
+            LOG(WARNING) << "io_uring_register_files_sparse returned EMFILE. "
+                         << "Try reducing FLAGS_io_uring_registered_files "
+                            "or increasing process-open-file limits.";
+        }
         Close();
         return ret;
     }
 
-    free_reg_fd_idx_.reserve(1024);
-    for (uint16_t f_idx = 0; f_idx < 1024; ++f_idx) {
+    free_reg_fd_idx_.reserve(file_slots);
+    for (uint16_t f_idx = 0; f_idx < file_slots; ++f_idx) {
         free_reg_fd_idx_.emplace_back(f_idx);
     }
 
@@ -89,7 +202,12 @@ int RingListener::Init() {
     }
     io_uring_buf_ring_advance(in_buf_ring_, buf_ring_size);
 
-    write_buf_pool_ = std::make_unique<RingWriteBufferPool>(1024, &ring_);
+    write_buf_pool_ =
+            std::make_unique<RingWriteBufferPool>(write_buf_slots, &ring_);
+
+    if (write_buf_pool_->buf_pool_.empty()) {
+        return -1;
+    }
 
     poll_status_.store(PollStatus::Sleep, std::memory_order_release);
     poll_thd_ = std::thread([&]() {

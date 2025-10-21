@@ -45,33 +45,6 @@ public:
 
         int ret = io_uring_register_buffers(ring, register_buf.data(),
                                             register_buf.size());
-        if (ret < 0 && -ret == ENOMEM) {
-            LOG(ERROR) << "Failed to register IO uring fixed buffers: ENOMEM,"
-                    " trying to increase the RLIMIT_MEMLOCK limit";
-            rlimit rl;
-            if (getrlimit(RLIMIT_MEMLOCK, &rl) == -1) {
-                perror("getrlimit");
-                LOG(ERROR) << "getrlimit fails";
-            } else {
-                const uint32_t rlim_cur = rl.rlim_cur;
-                rl.rlim_cur = 128 * 1024 * 1024;
-                if (rl.rlim_cur > rl.rlim_max) {
-                    rl.rlim_cur = rl.rlim_max;
-                }
-                if (rl.rlim_cur > rlim_cur) {
-                    LOG(INFO) << "Increase rlim_cur from: " << rlim_cur << " bytes, to: "
-                        << rl.rlim_cur << " bytes, rlim_max: " << rl.rlim_max;
-
-                    if (setrlimit(RLIMIT_MEMLOCK, &rl) == -1) {
-                        perror("setrlimit");
-                        LOG(ERROR) << "setrlimit fails";
-                    } else {
-                        ret = io_uring_register_buffers(ring, register_buf.data(),
-                                                        register_buf.size());
-                    }
-                }
-            }
-        }
         while (ret < 0 && -ret == ENOMEM && pool_size >= 128) {
             pool_size /= 2;
             LOG(ERROR) << "Failed to register IO uring fixed buffers: ENOMEM,"
@@ -86,7 +59,27 @@ public:
 
             LOG(ERROR) << "Failed to register IO uring fixed buffers. errno: "
                     << err << " (" << strerror(err) << ")";
-
+            rlimit memlock_limit{};
+            if (getrlimit(RLIMIT_MEMLOCK, &memlock_limit) == 0) {
+                std::string soft_limit = memlock_limit.rlim_cur == RLIM_INFINITY
+                                             ? "unlimited"
+                                             : std::to_string(static_cast<unsigned long long>(memlock_limit.rlim_cur));
+                std::string hard_limit = memlock_limit.rlim_max == RLIM_INFINITY
+                                             ? "unlimited"
+                                             : std::to_string(static_cast<unsigned long long>(memlock_limit.rlim_max));
+                LOG(WARNING) << "io_uring_register_buffers encountered ENOMEM. "
+                             << "Requested buffer count: " << pool_size << ", "
+                             << "each buffer size: " << buf_length << ". "
+                             << "Current RLIMIT_MEMLOCK soft=" << soft_limit
+                             << " hard=" << hard_limit
+                             << ". Raise the limit or reduce "
+                                "FLAGS_io_uring_write_buffer_pool.";
+            } else {
+                const int saved_errno = errno;
+                LOG(WARNING) << "Failed to query RLIMIT_MEMLOCK while handling "
+                                "io_uring_register_files_sparse failure, errno: "
+                             << saved_errno;
+            }
             free(mem_bulk_);
             mem_bulk_ = nullptr;
             buf_pool_.clear();
@@ -125,5 +118,7 @@ public:
 private:
     char *mem_bulk_{nullptr};
     std::vector<uint16_t> buf_pool_;
+
+    friend class RingListener;
 };
 #endif

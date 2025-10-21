@@ -327,9 +327,10 @@ int TaskGroup::init(size_t runqueue_capacity) {
     if (FLAGS_use_io_uring) {
         ring_listener_ = std::make_unique<RingListener>(this);
         int ret = ring_listener_->Init();
-        if (ret) {
-            LOG(ERROR) << "Failed to initialize the IO uring listener.";
+        if (ret != 0) {
+            LOG(FATAL) << "Failed to initialize the IO uring listener.";
             ring_listener_ = nullptr;
+            return -1;
         }
     }
 #endif
