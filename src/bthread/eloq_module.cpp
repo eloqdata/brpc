@@ -47,6 +47,17 @@ namespace eloq {
     }
 
     int unregister_module(EloqModule *module) {
+        // Verify that the module is currently registered.
+        std::shared_lock s_lk(module_mutex);
+        const bool exists = std::find(registered_modules.begin(),
+                        registered_modules.end(),
+                        module) != registered_modules.end();
+        if (!exists) {
+            LOG(WARNING) << "Attempted to unregister a non-registered module: " << module;
+            return -1;
+        }
+        s_lk.unlock();
+
         const auto concurrency = bthread_get_task_control()->concurrency();
         while (module->registered_workers_.load(std::memory_order_acquire) != concurrency) {
             for (int thd_id = 0; thd_id < concurrency; ++thd_id) {
