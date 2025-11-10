@@ -23,8 +23,9 @@
 #include "bthread/bthread.h"
 
 extern "C" {
-    bthread::TaskControl* bthread_get_task_control();
+bthread::TaskControl *bthread_get_task_control();
 }
+
 extern std::array<eloq::EloqModule *, 10> registered_modules;
 extern std::atomic<int> registered_module_cnt;
 
@@ -50,8 +51,8 @@ namespace eloq {
         // Verify that the module is currently registered.
         std::shared_lock s_lk(module_mutex);
         const bool exists = std::find(registered_modules.begin(),
-                        registered_modules.end(),
-                        module) != registered_modules.end();
+                                      registered_modules.end(),
+                                      module) != registered_modules.end();
         if (!exists) {
             LOG(WARNING) << "Attempted to unregister a non-registered module: " << module;
             return -1;
