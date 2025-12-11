@@ -21,6 +21,7 @@
 
 #include <sys/types.h>
 #include <stddef.h>                         // size_t
+#include <typeinfo>
 #include <gflags/gflags.h>
 #include "butil/compat.h"                   // OS_MACOSX
 #include "butil/macros.h"                   // ARRAY_SIZE
@@ -73,6 +74,8 @@ const bool ALLOW_UNUSED dummy_show_per_worker_usage_in_vars =
 
 DEFINE_int32(worker_polling_time_us, 0, "Worker keep busy polling some time before "
                                        "sleeping on parking lot");
+DEFINE_int32(module_process_latency_log_threshold_us, 0,
+             "Log module process latency longer than this threshold (0 disables logging)");
 
 BAIDU_VOLATILE_THREAD_LOCAL(TaskGroup*, tls_task_group, NULL);
 // Sync with TaskMeta::local_storage when a bthread is created or destroyed.
@@ -1280,9 +1283,22 @@ void TaskGroup::ProcessModulesTask() {
         module->ExtThdStart(group_id_);
     }
 
+    const int32_t log_threshold_us = FLAGS_module_process_latency_log_threshold_us;
     for (auto *module : registered_modules_) {
-        if (module != nullptr) {
+        if (module == nullptr) {
+            continue;
+        }
+        if (log_threshold_us <= 0) {
             module->Process(group_id_);
+            continue;
+        }
+        const int64_t start_us = butil::cpuwide_time_us();
+        module->Process(group_id_);
+        const int64_t elapsed_us = butil::cpuwide_time_us() - start_us;
+        if (elapsed_us > log_threshold_us) {
+            LOG(INFO) << "ProcessModulesTask: module "
+                      << typeid(*module).name() << " took "
+                      << elapsed_us << " us";
         }
     }
 }
