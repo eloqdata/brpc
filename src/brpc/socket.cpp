@@ -2288,6 +2288,9 @@ ssize_t Socket::DoWrite(WriteRequest* req) {
         BAIDU_SCOPED_LOCK(_ssl_session_mutex);
         nw = butil::IOBuf::cut_multiple_into_SSL_channel(_ssl_session, data_list, ndata, &ssl_error);
     }
+    LOG(INFO) << "Socket::DoWrite cut_multiple_into_SSL_channel nw: " << nw
+    << ", ssl_error: " << ssl_error
+    << ", errno: " << int(errno);
     switch (ssl_error) {
     case SSL_ERROR_NONE:
         break;

@@ -1050,6 +1050,7 @@ ssize_t IOBuf::cut_into_SSL_channel(SSL* ssl, int* ssl_error) {
         pop_front(nw);
     }
     *ssl_error = SSL_get_error(ssl, nw);
+    LOG(INFO) << "SSL_write nw: " << nw << ", ssl error: " << *ssl_error;
     return nw;
 }
 
@@ -1075,6 +1076,7 @@ ssize_t IOBuf::cut_multiple_into_SSL_channel(SSL* ssl, IOBuf* const* pieces,
                     *ssl_error = SSL_ERROR_WANT_WRITE;
                 } else {
                     // Other errors are fatal
+                    LOG(INFO) << "cut_multiple_into_SSL_channel return fatal error rc: " << rc;
                     return rc;
                 }
             }
