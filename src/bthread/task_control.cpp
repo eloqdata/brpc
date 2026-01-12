@@ -20,6 +20,8 @@
 // Date: Tue Jul 10 17:40:58 CST 2012
 
 #include <functional>
+#include <sched.h>                       // sched_setaffinity
+#include <unistd.h>                      // sysconf
 #include "butil/scoped_lock.h"             // BAIDU_SCOPED_LOCK
 #include "butil/errno.h"                   // berror
 #include "butil/logging.h"
@@ -46,6 +48,8 @@ namespace bthread {
 
 DECLARE_int32(bthread_concurrency);
 DECLARE_int32(bthread_min_concurrency);
+DEFINE_bool(bind_brpc_worker_to_core, false,
+            "Bind brpc worker threads to CPU cores with the same id as their TaskGroup");
 
 extern pthread_mutex_t g_task_control_mutex;
 extern BAIDU_THREAD_LOCAL TaskGroup* tls_task_group;
@@ -75,6 +79,22 @@ void* TaskControl::worker_thread(void* arg) {
     std::string worker_thread_name = butil::string_printf(
         "brpc_worker:%d", g->group_id_);
     butil::PlatformThread::SetName(worker_thread_name.c_str());
+    if (FLAGS_bind_brpc_worker_to_core) {
+        const long cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
+        if (cpu_count > 0 && g->group_id_ < cpu_count) {
+            cpu_set_t cpuset;
+            CPU_ZERO(&cpuset);
+            CPU_SET(g->group_id_, &cpuset);
+            const int rc = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+            if (rc != 0) {
+                LOG(WARNING) << "Fail to set affinity for worker " << pthread_self()
+                            << " to cpu " << g->group_id_ << ", " << berror(rc);
+            }
+        } else {
+            LOG(WARNING) << "Cannot bind worker group=" << g->group_id_
+                         << " due to invalid cpu_count=" << cpu_count;
+        }
+    }
     BT_VLOG << "Created worker=" << pthread_self()
             << " bthread=" << g->main_tid();
 
