@@ -21,6 +21,7 @@
 
 #include <iostream>                            // std::ostream
 #include <deque>                               // std::deque
+#include <memory>                              // std::unique_ptr
 #include <set>                                 // std::set
 #include "butil/atomicops.h"                    // butil::atomic
 #include "bthread/types.h"                      // bthread_id_t
@@ -48,6 +49,8 @@ struct InboundRingBuf;
 namespace bthread {
 class TaskGroup;
 }
+
+typedef struct bio_st BIO;
 
 namespace brpc {
 namespace policy {
@@ -277,6 +280,9 @@ friend class policy::H2GlobalStreamCreator;
     class SharedPart;
     struct Forbidden {};
     struct WriteRequest;
+#ifdef IO_URING_ENABLED
+    struct TlsRingContext;
+#endif
 
 public:
     const static int STREAM_FAKE_FD = INT_MAX;
@@ -351,6 +357,7 @@ public:
             {}
 #endif
     };
+
 
 #ifdef IO_URING_ENABLED
     int Write(char *ring_buf, uint16_t ring_buf_idx, uint32_t ring_buf_size,
@@ -642,6 +649,18 @@ public:
     int CopyDataRead();
     void ClearInboundBuf();
     bool RecycleInBackgroundIfNecessary();
+    // TLS memory BIO helpers (io_uring path only).
+    int InitTlsRingContext(int fd);
+    void DestroyTlsRingContext();
+    int AddMemoryBIO(int fd);
+    // Push ciphertext read from io_uring into SSL's memory BIO.
+    int FeedTlsCiphertext(const void* data, size_t len);
+    // Drain encrypted bytes from SSL's memory BIO to pending buffer.
+    int DrainTlsCiphertext();
+    // Push pending ciphertext to io_uring (synchronous submit).
+    int FlushTlsCiphertext();
+    // Pull decrypted plaintext from SSL into _read_buf.
+    ssize_t ConsumeTlsPlaintext(size_t size_hint);
 #endif
 private:
     DISALLOW_COPY_AND_ASSIGN(Socket);
@@ -678,6 +697,9 @@ friend void DereferenceSocket(Socket*);
     // `req' using the corresponding method. Returns written bytes on
     // success, -1 otherwise and errno is set
     ssize_t DoWrite(WriteRequest* req);
+#ifdef IO_URING_ENABLED
+    ssize_t DoWriteTlsRing(WriteRequest* req, butil::IOBuf* data_list[], size_t ndata);
+#endif
 
     // Called before returning to pool.
     void OnRecycle();
@@ -976,6 +998,10 @@ private:
 
     // Storing data that are not flushed into `fd' yet.
     butil::atomic<WriteRequest*> _write_head;
+#ifdef IO_URING_ENABLED
+    std::unique_ptr<TlsRingContext> _tls_ring_ctx;
+    bool _tls_uses_ring{};
+#endif
 
     butil::Mutex _stream_mutex;
     std::set<StreamId> *_stream_set;

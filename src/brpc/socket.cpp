@@ -64,7 +64,10 @@
 DEFINE_bool(dispatch_lazily, false, "dispatcher lazily creates task");
 #ifdef IO_URING_ENABLED
 DEFINE_bool(use_io_uring, false, "Use IO URING to do the polling.");
+DEFINE_bool(enable_ssl_io_uring, false, "Use memory BIO + io_uring for TLS sockets.");
 #endif
+
+#include <boost/stacktrace/stacktrace.hpp>
 
 namespace bthread {
 size_t __attribute__((weak))
@@ -360,6 +363,25 @@ struct RegisteredRingBuffer {
 };
 #endif
 
+#ifdef IO_URING_ENABLED
+struct Socket::TlsRingContext {
+    TlsRingContext()
+        : mem_rbio(NULL)
+        , mem_wbio(NULL) {}
+
+    ~TlsRingContext() {
+        // Actual BIO lifetime is now owned by SSL after SSL_set_bio.
+        mem_rbio = NULL;
+        mem_wbio = NULL;
+    }
+
+    BIO* mem_rbio;
+    BIO* mem_wbio;
+    // Ciphertext drained from memory BIO waiting to be submitted via io_uring.
+    butil::IOBuf pending_cipher_out;
+};
+#endif
+
 struct BAIDU_CACHELINE_ALIGNMENT Socket::WriteRequest {
     static WriteRequest* const UNCONNECTED;
     
@@ -534,6 +556,10 @@ Socket::Socket(Forbidden)
     , _unwritten_bytes(0)
     , _epollout_butex(NULL)
     , _write_head(NULL)
+#ifdef IO_URING_ENABLED
+    , _tls_ring_ctx()
+    , _tls_uses_ring(false)
+#endif
     , _stream_set(NULL)
     , _total_streams_unconsumed_size(0)
     , _ninflight_app_health_check(0)
@@ -544,6 +570,9 @@ Socket::Socket(Forbidden)
 }
 
 Socket::~Socket() {
+#ifdef IO_URING_ENABLED
+    DestroyTlsRingContext();
+#endif
     pthread_mutex_destroy(&_id_wait_list_mutex);
     bthread::butex_destroy(_epollout_butex);
 }
@@ -617,6 +646,136 @@ void Socket::ReleaseAllFailedWriteRequests(Socket::WriteRequest* req) {
     } while (!IsWriteComplete(req, true, NULL));
     ReturnFailedWriteRequest(req, error_code, error_text);
 }
+
+#ifdef IO_URING_ENABLED
+int Socket::InitTlsRingContext(int /*fd*/) {
+    if (!FLAGS_use_io_uring || !FLAGS_enable_ssl_io_uring) {
+        return 0;
+    }
+    if (_tls_ring_ctx) {
+        return 0;
+    }
+    _tls_ring_ctx = std::make_unique<TlsRingContext>();
+    if (_tls_ring_ctx == NULL) {
+        LOG(ERROR) << "Fail to allocate TlsRingContext";
+        return -1;
+    }
+    _tls_uses_ring = true;
+    return 0;
+}
+
+void Socket::DestroyTlsRingContext() {
+    _tls_ring_ctx.reset();
+    _tls_uses_ring = false;
+}
+
+int Socket::AddMemoryBIO(int fd) {
+    if (!FLAGS_use_io_uring || !FLAGS_enable_ssl_io_uring) {
+        return 0;
+    }
+    if (InitTlsRingContext(fd) != 0) {
+        return -1;
+    }
+    BIO* mem_rbio = BIO_new(BIO_s_mem());
+    BIO* mem_wbio = BIO_new(BIO_s_mem());
+    if (!mem_rbio || !mem_wbio) {
+        if (mem_rbio) {
+            BIO_free(mem_rbio);
+        }
+        if (mem_wbio) {
+            BIO_free(mem_wbio);
+        }
+        LOG(ERROR) << "Fail to create memory BIO for TLS ring";
+        return -1;
+    }
+    {
+        BAIDU_SCOPED_LOCK(_ssl_session_mutex);
+        BIO* old_wbio = SSL_get_wbio(_ssl_session);
+        if (old_wbio) {
+            BIO_flush(old_wbio);
+        }
+        SSL_set_bio(_ssl_session, mem_rbio, mem_wbio);
+    }
+    _tls_ring_ctx->mem_rbio = mem_rbio;
+    _tls_ring_ctx->mem_wbio = mem_wbio;
+    return 0;
+}
+
+int Socket::FeedTlsCiphertext(const void* data, size_t len) {
+    if (!_tls_ring_ctx || !_tls_ring_ctx->mem_rbio || len == 0) {
+        return 0;
+    }
+    const int nw = BIO_write(_tls_ring_ctx->mem_rbio, data, len);
+    if (nw <= 0) {
+        return -1;
+    }
+    return nw;
+}
+
+int Socket::DrainTlsCiphertext() {
+    if (!_tls_ring_ctx || !_tls_ring_ctx->mem_wbio) {
+        return 0;
+    }
+    char buf[16 * 1024];
+    int total = 0;
+    while (BIO_pending(_tls_ring_ctx->mem_wbio) > 0) {
+        int rc = BIO_read(_tls_ring_ctx->mem_wbio, buf, sizeof(buf));
+        if (rc <= 0) {
+            break;
+        }
+        _tls_ring_ctx->pending_cipher_out.append(buf, rc);
+        total += rc;
+    }
+    return total;
+}
+
+int Socket::FlushTlsCiphertext() {
+    if (!_tls_ring_ctx) {
+        return 0;
+    }
+    ssize_t total = 0;
+    while (!_tls_ring_ctx->pending_cipher_out.empty()) {
+        _tls_ring_ctx->pending_cipher_out.cut_into_iovecs(&iovecs_);
+        if (iovecs_.empty()) {
+            break;
+        }
+        bthread::TaskGroup* g = bthread::TaskGroup::VolatileTLSTaskGroup();
+        int rc = g->SocketWaitingNonFixedWrite(this);
+        if (rc < 0) {
+            errno = -rc;
+            iovecs_.clear();
+            return -1;
+        }
+        total += rc;
+        _tls_ring_ctx->pending_cipher_out.pop_front(rc);
+        iovecs_.clear();
+    }
+    return total;
+}
+
+ssize_t Socket::ConsumeTlsPlaintext(size_t size_hint) {
+    if (!_tls_ring_ctx || !_tls_ring_ctx->mem_rbio) {
+        return 0;
+    }
+    ssize_t total = 0;
+    while (total < (ssize_t)size_hint) {
+        char buf[4 * 1024];
+        ERR_clear_error();
+        int rc = SSL_read(_ssl_session, buf, std::min<size_t>(sizeof(buf), size_hint - total));
+        if (rc <= 0) {
+            int ssl_err = SSL_get_error(_ssl_session, rc);
+            if (ssl_err == SSL_ERROR_WANT_READ) {
+                break;
+            }
+            errno = (ssl_err == SSL_ERROR_ZERO_RETURN) ? ECONNRESET : ESSL;
+            return -1;
+        }
+        _read_buf.append(buf, rc);
+        total += rc;
+    }
+    return total;
+}
+#endif
 
 int Socket::ResetFileDescriptor(int fd, size_t bound_gid) {
     // Reset message sizes when fd is changed.
@@ -1197,6 +1356,9 @@ int Socket::Status(SocketId id, int32_t* nref) {
 }
 
 void Socket::OnRecycle() {
+#ifdef IO_URING_ENABLED
+    DestroyTlsRingContext();
+#endif
     const bool create_by_connect = CreatedByConnect();
     if (_app_connect) {
         std::shared_ptr<AppConnect> tmp;
@@ -2271,17 +2433,17 @@ ssize_t Socket::DoWrite(WriteRequest* req) {
         }
     }
 
-#ifdef IO_URING_ENABLED
-    // io_uring and SSL is not supported.
-    CHECK(!use_mixed_data_list);
-#endif
-
     CHECK_EQ(SSL_CONNECTED, ssl_state());
     if (_conn) {
         // TODO: Separate SSL stuff from SocketConnection
         BAIDU_SCOPED_LOCK(_ssl_session_mutex);
         return _conn->CutMessageIntoSSLChannel(_ssl_session, data_list, ndata);
     }
+#ifdef IO_URING_ENABLED
+    if (FLAGS_use_io_uring && FLAGS_enable_ssl_io_uring && _tls_ring_ctx) {
+        return DoWriteTlsRing(req, data_list, ndata);
+    }
+#endif
     int ssl_error = 0;
     ssize_t nw = 0;
     {
@@ -2317,6 +2479,50 @@ ssize_t Socket::DoWrite(WriteRequest* req) {
     return nw;
 }
 
+#ifdef IO_URING_ENABLED
+ssize_t Socket::DoWriteTlsRing(WriteRequest* req, butil::IOBuf* data_list[], size_t ndata) {
+    ssize_t total_plain = 0;
+    // SSL objects are not thread-safe. Guard all SSL_write operations.
+    BAIDU_SCOPED_LOCK(_ssl_session_mutex);
+    for (size_t i = 0; i < ndata; ++i) {
+        butil::IOBuf* buf = data_list[i];
+        while (!buf->empty()) {
+            int ssl_error = SSL_ERROR_NONE;
+            // cut_into_SSL_channel sends plaintext into SSL_write and removes
+            // consumed bytes from |buf| when successful.
+            const ssize_t nw = buf->cut_into_SSL_channel(_ssl_session, &ssl_error);
+            if (nw > 0) {
+                total_plain += nw;
+                continue;
+            }
+
+            if (ssl_error == SSL_ERROR_WANT_WRITE) {
+                // Memory BIO is full. Drain existing ciphertext and push to
+                // io_uring before retrying the remaining plaintext.
+                DrainTlsCiphertext();
+                if (FlushTlsCiphertext() < 0) {
+                    return -1;
+                }
+                continue;
+            }
+
+            if (ssl_error == SSL_ERROR_WANT_READ) {
+                errno = EPROTO;
+            } else {
+                errno = ESSL;
+            }
+            return -1;
+        }
+    }
+    DrainTlsCiphertext();
+    if (FlushTlsCiphertext() < 0) {
+        return -1;
+    }
+
+    return total_plain;
+}
+#endif
+
 int Socket::SSLHandshake(int fd, bool server_mode) {
     if (_ssl_ctx == NULL) {
         if (server_mode) {
@@ -2349,10 +2555,20 @@ int Socket::SSLHandshake(int fd, bool server_mode) {
     // as it may confuse the origin event processing code.
     while (true) {
         ERR_clear_error();
+        LOG(INFO) << "SSLHandshake: " << *this << ", " << boost::stacktrace::stacktrace();
         int rc = SSL_do_handshake(_ssl_session);
         if (rc == 1) {
             _ssl_state = SSL_CONNECTED;
+#ifdef IO_URING_ENABLED
+            if (FLAGS_use_io_uring && FLAGS_enable_ssl_io_uring) {
+                if (AddMemoryBIO(fd) != 0) {
+                    return -1;
+                }
+                return 0;
+            }
+#else
             AddBIOBuffer(_ssl_session, fd, FLAGS_ssl_bio_buffer_size);
+#endif
             return 0;
         }
 
@@ -2437,6 +2653,7 @@ ssize_t Socket::DoRead(size_t size_hint) {
     int ssl_error = 0;
     ssize_t nr = 0;
     {
+        LOG(INFO) << "DoRead: " << *this << ", " << boost::stacktrace::stacktrace();
         BAIDU_SCOPED_LOCK(_ssl_session_mutex);
         nr = _read_buf.append_from_SSL_channel(_ssl_session, &ssl_error, size_hint);
     }
