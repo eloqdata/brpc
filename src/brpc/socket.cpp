@@ -695,6 +695,8 @@ int Socket::AddMemoryBIO(int fd) {
             BIO_flush(old_wbio);
         }
         SSL_set_bio(_ssl_session, mem_rbio, mem_wbio);
+        LOG_IF(INFO, FLAGS_enable_ssl_io_uring)
+            << "Socket=" << *this << " switched SSL BIO to memory (fd=" << fd << ")";
     }
     _tls_ring_ctx->mem_rbio = mem_rbio;
     _tls_ring_ctx->mem_wbio = mem_wbio;
@@ -726,6 +728,7 @@ int Socket::DrainTlsCiphertext() {
         _tls_ring_ctx->pending_cipher_out.append(buf, rc);
         total += rc;
     }
+    LOG_IF(INFO, total > 0) << "Socket=" << *this << " drained " << total << " bytes TLS ciphertext";
     return total;
 }
 
@@ -749,6 +752,7 @@ int Socket::FlushTlsCiphertext() {
         total += rc;
         _tls_ring_ctx->pending_cipher_out.pop_front(rc);
         iovecs_.clear();
+        LOG(INFO) << "Socket=" << *this << " flushed " << rc << " bytes TLS ciphertext via io_uring";
     }
     return total;
 }
@@ -2364,7 +2368,7 @@ ssize_t Socket::DoWrite(WriteRequest* req) {
 #ifdef IO_URING_ENABLED
     std::variant<butil::IOBuf*, RegisteredRingBuffer*> mixed_data_list[DATA_LIST_MAX];
     // If io_uring is used and this is not a stream, use mixed_data_list.
-    bool use_mixed_data_list = FLAGS_use_io_uring && _conn == nullptr;
+    bool use_mixed_data_list = FLAGS_use_io_uring && _conn == nullptr && !FLAGS_enable_ssl_io_uring;
 #endif
     size_t ndata = 0;
     for (WriteRequest* p = req; p != NULL && ndata < DATA_LIST_MAX;
@@ -2501,8 +2505,12 @@ ssize_t Socket::DoWriteTlsRing(WriteRequest* req, butil::IOBuf* data_list[], siz
                 // io_uring before retrying the remaining plaintext.
                 DrainTlsCiphertext();
                 if (FlushTlsCiphertext() < 0) {
+                    LOG(WARNING) << "Socket=" << *this
+                                 << " FlushTlsCiphertext failed during WANT_WRITE: "
+                                 << berror(errno);
                     return -1;
                 }
+                LOG(INFO) << "Socket=" << *this << " TLS WANT_WRITE resolved, retrying";
                 continue;
             }
 
@@ -2511,13 +2519,19 @@ ssize_t Socket::DoWriteTlsRing(WriteRequest* req, butil::IOBuf* data_list[], siz
             } else {
                 errno = ESSL;
             }
+            LOG(WARNING) << "Socket=" << *this << " TLS write failed: "
+                         << SSLError(ERR_get_error()) << " errno=" << errno;
             return -1;
         }
     }
     DrainTlsCiphertext();
     if (FlushTlsCiphertext() < 0) {
+        LOG(WARNING) << "Socket=" << *this
+                     << " FlushTlsCiphertext failed after draining: "
+                     << berror(errno);
         return -1;
     }
+    LOG(INFO) << "Socket=" << *this << " wrote TLS plaintext=" << total_plain;
 
     return total_plain;
 }
@@ -2653,7 +2667,7 @@ ssize_t Socket::DoRead(size_t size_hint) {
     int ssl_error = 0;
     ssize_t nr = 0;
     {
-        LOG(INFO) << "DoRead: " << *this << ", " << boost::stacktrace::stacktrace();
+        // LOG(INFO) << "DoRead: " << *this << ", " << boost::stacktrace::stacktrace();
         BAIDU_SCOPED_LOCK(_ssl_session_mutex);
         nr = _read_buf.append_from_SSL_channel(_ssl_session, &ssl_error, size_hint);
     }
