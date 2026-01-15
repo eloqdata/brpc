@@ -422,6 +422,7 @@ void InputMessenger::OnNewMessagesFromRing(Socket *m) {
 
         const ssize_t nr = m->CopyDataRead();
 
+        // TODO(zkl): EAGAIN should check buf_idx_ and return if no new data
         if (nr <= 0) {
             if (0 == nr) {
                 // Set `read_eof' flag and proceed to feed EOF into `Protocol'

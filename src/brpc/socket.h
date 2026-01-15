@@ -699,6 +699,11 @@ friend void DereferenceSocket(Socket*);
     ssize_t DoWrite(WriteRequest* req);
 #ifdef IO_URING_ENABLED
     ssize_t DoWriteTlsRing(WriteRequest* req, butil::IOBuf* data_list[], size_t ndata);
+    // io_uring TLS helpers for read path
+    int EnsureTlsSessionForRing();
+    int ContinueTlsHandshake();
+    ssize_t ProcessTlsRingData(const char* data, size_t len);
+    ssize_t HandleTlsRingRead(const char* data, size_t len);
 #endif
 
     // Called before returning to pool.
@@ -998,6 +1003,9 @@ private:
 
     // Storing data that are not flushed into `fd' yet.
     butil::atomic<WriteRequest*> _write_head;
+#ifdef IO_URING_ENABLED
+    butil::IOBuf _tls_detect_buf;
+#endif
 #ifdef IO_URING_ENABLED
     std::unique_ptr<TlsRingContext> _tls_ring_ctx;
     bool _tls_uses_ring{};
