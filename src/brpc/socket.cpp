@@ -704,10 +704,13 @@ int Socket::AddMemoryBIO(int fd) {
 }
 
 int Socket::FeedTlsCiphertext(const void* data, size_t len) {
+    LOG(INFO) << "FeedTlsCiphertext, len: " << len;
     if (!_tls_ring_ctx || !_tls_ring_ctx->mem_rbio || len == 0) {
+        LOG(INFO) << "return 0";
         return 0;
     }
     const int nw = BIO_write(_tls_ring_ctx->mem_rbio, data, len);
+    LOG(INFO) << "nw: " << nw;
     if (nw <= 0) {
         return -1;
     }
@@ -733,7 +736,9 @@ int Socket::DrainTlsCiphertext() {
 }
 
 int Socket::FlushTlsCiphertext() {
+    LOG(INFO) << "FlushTlsCiphertext";
     if (!_tls_ring_ctx) {
+        LOG(INFO) << "return 0";
         return 0;
     }
     ssize_t total = 0;
@@ -747,6 +752,7 @@ int Socket::FlushTlsCiphertext() {
         if (rc < 0) {
             errno = -rc;
             iovecs_.clear();
+            LOG(INFO) << "return -1";
             return -1;
         }
         total += rc;
@@ -754,10 +760,12 @@ int Socket::FlushTlsCiphertext() {
         iovecs_.clear();
         LOG(INFO) << "Socket=" << *this << " flushed " << rc << " bytes TLS ciphertext via io_uring";
     }
+    LOG(INFO) << "return total: " << total;
     return total;
 }
 
 ssize_t Socket::ConsumeTlsPlaintext(size_t size_hint) {
+    LOG(INFO) << "ConsumeTlsPlaintext, size_hint: " << size_hint;
     if (!_tls_ring_ctx || !_tls_ring_ctx->mem_rbio) {
         return 0;
     }
@@ -789,6 +797,7 @@ int Socket::EnsureTlsSessionForRing() {
         return -1;
     }
     if (_ssl_session == NULL) {
+        LOG(INFO) << "Socket=" << *this << " creating TLS session";
         _ssl_session = CreateSSLSession(_ssl_ctx->raw_ctx, id(), fd(), true);
         if (_ssl_session == NULL) {
             LOG(ERROR) << "Socket=" << *this << " failed to create SSL session";
@@ -796,11 +805,15 @@ int Socket::EnsureTlsSessionForRing() {
             return -1;
         }
         SSL_set_accept_state(_ssl_session);
+    } else {
+        LOG(INFO) << "Socket=" << *this << " reusing existing TLS session";
     }
     if (AddMemoryBIO(fd()) != 0) {
+        LOG(ERROR) << "Socket=" << *this << " failed to bind memory BIO";
         errno = ESSL;
         return -1;
     }
+    LOG(INFO) << "Socket=" << *this << " initialized TLS session for io_uring";
     return 0;
 }
 
@@ -808,6 +821,7 @@ int Socket::ContinueTlsHandshake() {
     // Drive SSL handshake until it completes or requires more data. Any
     // handshake output is drained and submitted via io_uring.
     while (_ssl_state == SSL_CONNECTING) {
+        LOG(INFO) << "ContinueTlsHandshake _ssl_state: " << int(_ssl_state);
         ERR_clear_error();
         int rc = SSL_do_handshake(_ssl_session);
         if (rc == 1) {
@@ -815,7 +829,19 @@ int Socket::ContinueTlsHandshake() {
             break;
         }
         const int ssl_err = SSL_get_error(_ssl_session, rc);
+        LOG(INFO) << "ssl_err: " << int(ssl_err);
         if (ssl_err == SSL_ERROR_WANT_READ) {
+            LOG(INFO) << "SSL_ERROR_WANT_READ";
+            DrainTlsCiphertext();
+            if (!_tls_ring_ctx->pending_cipher_out.empty()) {
+                if (FlushTlsCiphertext() < 0) {
+                    LOG(WARNING) << "Socket=" << *this
+                                 << " failed to flush TLS handshake after WANT_READ: "
+                                 << berror(errno);
+                    return -1;
+                }
+                LOG(INFO) << "Socket=" << *this << " flushed TLS handshake data after WANT_READ";
+            }
             break;
         } else if (ssl_err == SSL_ERROR_WANT_WRITE) {
             DrainTlsCiphertext();
@@ -824,6 +850,7 @@ int Socket::ContinueTlsHandshake() {
                              << " failed to flush TLS handshake: " << berror(errno);
                 return -1;
             }
+            LOG(INFO) << "Socket=" << *this << " flushed TLS handshake data via io_uring";
         } else {
             LOG(WARNING) << "Socket=" << *this << " TLS handshake error: "
                          << SSLError(ERR_get_error());
@@ -838,17 +865,24 @@ ssize_t Socket::ProcessTlsRingData(const char* data, size_t len) {
     // Feed ciphertext into the SSL read BIO and, if handshake is still in
     // progress, continue driving it. When fully connected, decrypt plaintext
     // into _read_buf.
+    LOG(INFO) << "Socket=" << *this << ", ProcessTlsRingData, len: " << len;
     if (len > 0) {
         if (FeedTlsCiphertext(data, len) < 0) {
             errno = ESSL;
             return -1;
         }
     }
+    LOG(INFO) << "_ssl_state: " << int(_ssl_state);
     if (_ssl_state == SSL_CONNECTING) {
+        LOG(INFO) << "SSL_CONNECTING, ContinueTlsHandshake";
         if (ContinueTlsHandshake() != 0) {
             return -1;
         }
+        if (_ssl_state == SSL_CONNECTED) {
+            LOG(INFO) << "Socket=" << *this << " TLS handshake completed";
+        }
     }
+    LOG(INFO) << "_ssl_state: " << int(_ssl_state);
     if (_ssl_state != SSL_CONNECTED) {
         return 0;
     }
@@ -877,11 +911,13 @@ ssize_t Socket::HandleTlsRingRead(const char* data, size_t len) {
         // using TLS. The first handshake record needs at least 6 bytes.
         _tls_detect_buf.append(data, len);
         if (_tls_detect_buf.length() < 6) {
-            return len;
+            errno = EAGAIN;
+            return -errno;
         }
         char header[6];
         _tls_detect_buf.copy_to(header, 6);
         SSLState s = DetectSSLStateInBuffer(header, 6);
+        LOG(INFO) << "Socket=" << *this << " DetectSSLStateInBuffer, ssl state: " << int(s);
         if (s == SSL_CONNECTING) {
             if (EnsureTlsSessionForRing() != 0) {
                 errno = ESSL;
@@ -892,7 +928,14 @@ ssize_t Socket::HandleTlsRingRead(const char* data, size_t len) {
             cached.resize(_tls_detect_buf.size());
             _tls_detect_buf.copy_to(cached.data(), cached.size());
             _tls_detect_buf.clear();
-            return ProcessTlsRingData(cached.data(), cached.size());
+            LOG(INFO) << "Socket=" << *this << " detected TLS over io_uring (cached="
+                      << cached.size() << " bytes)";
+            ssize_t plain = ProcessTlsRingData(cached.data(), cached.size());
+            if (plain == 0) {
+                errno = EAGAIN;
+                return -errno;
+            }
+            return plain;
         } else {
             _ssl_state = SSL_OFF;
             _read_buf.append(_tls_detect_buf);
@@ -902,14 +945,23 @@ ssize_t Socket::HandleTlsRingRead(const char* data, size_t len) {
                 errno = ESSL;
                 return -1;
             }
+            LOG(INFO) << "Socket=" << *this << " treated as non-TLS over io_uring,"
+                      << " appended " << plain << " bytes";
             return plain;
         }
     }
     if (_ssl_state == SSL_CONNECTING || _ssl_state == SSL_CONNECTED) {
         // Once we know the connection is TLS, all incoming ciphertext goes
         // through ProcessTlsRingData.
-        return ProcessTlsRingData(data, len);
+        LOG(INFO) << "Socket=" << *this << " processing TLS ring data len=" << len;
+        ssize_t plain = ProcessTlsRingData(data, len);
+        if (plain == 0) {
+            errno = EAGAIN;
+            return -errno;
+        }
+        return plain;
     }
+    LOG(INFO) << "Socket=" << *this << " treating ring data as plaintext len=" << len;
     _read_buf.append(data, len);
     return len;
 }
@@ -967,10 +1019,12 @@ int Socket::ResetFileDescriptor(int fd, size_t bound_gid) {
 
     EnableKeepaliveIfNeeded(fd);
 
+    LOG(INFO) << "ResetFileDescriptor" << boost::stacktrace::stacktrace();
     if (_on_edge_triggered_events) {
 #ifdef IO_URING_ENABLED
       if (FLAGS_use_io_uring &&
         _on_edge_triggered_events == InputMessenger::OnNewMessagesFromRing) {
+          LOG(INFO) << "io_uring SocketRegister";
         bthread_attr_t attr;
         attr = BTHREAD_ATTR_NORMAL;
 
@@ -990,6 +1044,7 @@ int Socket::ResetFileDescriptor(int fd, size_t bound_gid) {
           }
       } else {
 #endif
+          LOG(INFO) << "GetGlobalEventDispatcher(fd).AddConsumer";
         if (GetGlobalEventDispatcher(fd).AddConsumer(id(), fd) != 0) {
           PLOG(ERROR) << "Fail to add SocketId=" << id()
                       << " into EventDispatcher";
@@ -2704,8 +2759,9 @@ int Socket::SSLHandshake(int fd, bool server_mode) {
     // as it may confuse the origin event processing code.
     while (true) {
         ERR_clear_error();
-        LOG(INFO) << "SSLHandshake: " << *this << ", " << boost::stacktrace::stacktrace();
         int rc = SSL_do_handshake(_ssl_session);
+        LOG(INFO) << "SSLHandshake: " << *this << ", " << boost::stacktrace::stacktrace()
+            << ", rc: " << rc;
         if (rc == 1) {
             _ssl_state = SSL_CONNECTED;
 #ifdef IO_URING_ENABLED
@@ -2722,6 +2778,7 @@ int Socket::SSLHandshake(int fd, bool server_mode) {
         }
 
         int ssl_error = SSL_get_error(_ssl_session, rc);
+        LOG(INFO) << "ssl_error: " << ssl_error;
         switch (ssl_error) {
         case SSL_ERROR_WANT_READ:
 #if defined(OS_LINUX)
@@ -3773,6 +3830,7 @@ void Socket::NotifyWaitingNonFixedWrite(int nw) {
 }
 
 int Socket::CopyDataRead() {
+    LOG(INFO) << "socket: " << *this << ", CopyDataRead";
     bthread::TaskGroup *cur_group = bound_g_;
     CHECK(static_cast<uint64_t>(buf_idx_) < in_bufs_.size());
     auto &rbuf = in_bufs_[buf_idx_];
@@ -3781,8 +3839,9 @@ int Socket::CopyDataRead() {
     if (rbuf.bytes_ > 0) {
         const char *buf_head = cur_group->GetRingReadBuf(rbuf.buf_id_);
 #ifdef IO_URING_ENABLED
-        if (FLAGS_use_io_uring && FLAGS_enable_ssl_io_uring) {
+        if (FLAGS_use_io_uring && FLAGS_enable_ssl_io_uring && _ssl_state != SSL_OFF) {
             ssize_t plain = HandleTlsRingRead(buf_head, rbuf.bytes_);
+            LOG(INFO) << "HandleTlsRingRead, plain: " << plain;
             if (plain < 0) {
                 ret = -errno;
                 goto END;

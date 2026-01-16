@@ -23,6 +23,7 @@
 #include "bthread/task_control.h"
 #include "bthread/task_group.h"
 #include <unordered_map>
+#include <boost/stacktrace/stacktrace.hpp>
 
 extern "C" {
 extern void bthread_flush();
@@ -145,6 +146,7 @@ int EventDispatcher::AddEpollOut(SocketId socket_id, int fd, bool pollin) {
         errno = EINVAL;
         return -1;
     }
+    LOG(INFO) << "AddEpollOut fd: " << fd << boost::stacktrace::stacktrace();
 
     epoll_event evt;
     evt.data.u64 = socket_id;
@@ -169,6 +171,7 @@ int EventDispatcher::AddEpollOut(SocketId socket_id, int fd, bool pollin) {
 
 int EventDispatcher::RemoveEpollOut(SocketId socket_id, 
                                     int fd, bool pollin) {
+    LOG(INFO) << "RemoveEpollOut fd: " << fd << ", pollin: " << pollin << boost::stacktrace::stacktrace();
     if (pollin) {
         epoll_event evt;
         evt.data.u64 = socket_id;
@@ -210,6 +213,7 @@ int EventDispatcher::RemoveConsumer(int fd) {
     // epoll_wait will keep returning events of the fd continuously, making
     // program abnormal.
     if (epoll_ctl(_epfd, EPOLL_CTL_DEL, fd, NULL) < 0) {
+        LOG(INFO) << "RemoveConsumer fd: " << fd << " stack trace: " << boost::stacktrace::stacktrace();
         PLOG(WARNING) << "Fail to remove fd=" << fd << " from epfd=" << _epfd;
         return -1;
     }
