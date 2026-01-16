@@ -29,8 +29,12 @@
 #include "brpc/protocol.h"                 // ListProtocols
 #include "brpc/rdma/rdma_endpoint.h"
 #include "brpc/input_messenger.h"
+
+#include <boost/stacktrace/stacktrace.hpp>
+
 #include "brpc/socket.h"
 
+DECLARE_bool(use_io_uring);
 
 namespace brpc {
 
@@ -417,12 +421,13 @@ void InputMessenger::OnNewMessagesFromRing(Socket *m) {
     InputMessageClosure last_msg;
     bool read_eof = false;
     while (!read_eof && m->buf_idx_ < m->in_bufs_.size()) {
+        LOG(INFO) << "m->buf_idx: " << m->buf_idx_  << ", m->in_bufs_.size(): " << m->in_bufs_.size();
         const int64_t received_us = butil::cpuwide_time_us();
         const int64_t base_realtime = butil::gettimeofday_us() - received_us;
 
         const ssize_t nr = m->CopyDataRead();
+        LOG(INFO) << "CopyDataRead nr: " << nr << ", read_buf size: " << m->_read_buf.size();
 
-        // TODO(zkl): EAGAIN should check buf_idx_ and return if no new data
         if (nr <= 0) {
             if (0 == nr) {
                 // Set `read_eof' flag and proceed to feed EOF into `Protocol'
@@ -440,6 +445,7 @@ void InputMessenger::OnNewMessagesFromRing(Socket *m) {
                     m->ClearInboundBuf();
                     return;
                 }
+                continue;
             }
         }
 
@@ -548,7 +554,11 @@ int InputMessenger::Create(const butil::EndPoint& remote_side,
     SocketOptions options;
     options.remote_side = remote_side;
     options.user = this;
+#ifdef IO_URING_ENABLED
+    options.on_edge_triggered_events = FLAGS_use_io_uring ? OnNewMessagesFromRing : OnNewMessages;
+#else
     options.on_edge_triggered_events = OnNewMessages;
+#endif
     options.health_check_interval_s = health_check_interval_s;
     if (FLAGS_socket_keepalive) {
         options.keepalive_options = std::make_shared<SocketKeepaliveOptions>();
@@ -572,7 +582,12 @@ int InputMessenger::Create(SocketOptions options, SocketId* id) {
 #else
     {
 #endif
+#ifdef IO_URING_ENABLED
+        LOG(INFO) << "InputMessenger::Create, " << boost::stacktrace::stacktrace();
+        options.on_edge_triggered_events = FLAGS_use_io_uring ? OnNewMessagesFromRing : OnNewMessages;
+#else
         options.on_edge_triggered_events = OnNewMessages;
+#endif
     }
     // Enable keepalive by options or Gflag.
     // Priority: options > Gflag.
