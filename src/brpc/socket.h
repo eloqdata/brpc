@@ -1003,13 +1003,6 @@ private:
 
     // Storing data that are not flushed into `fd' yet.
     butil::atomic<WriteRequest*> _write_head;
-#ifdef IO_URING_ENABLED
-    butil::IOBuf _tls_detect_buf;
-#endif
-#ifdef IO_URING_ENABLED
-    std::unique_ptr<TlsRingContext> _tls_ring_ctx;
-    bool _tls_uses_ring{};
-#endif
 
     butil::Mutex _stream_mutex;
     std::set<StreamId> *_stream_set;
@@ -1023,6 +1016,24 @@ private:
     std::shared_ptr<SocketKeepaliveOptions> _keepalive_options;
 
     // These fields are only for io_uring build.
+
+    struct TlsRingContext {
+        TlsRingContext()
+            : mem_rbio(NULL)
+            , mem_wbio(NULL) {}
+
+        ~TlsRingContext() {
+            // Actual BIO lifetime is now owned by SSL after SSL_set_bio.
+            mem_rbio = NULL;
+            mem_wbio = NULL;
+        }
+
+        BIO* mem_rbio;
+        BIO* mem_wbio;
+        // Ciphertext drained from memory BIO waiting to be submitted via io_uring.
+        butil::IOBuf pending_cipher_out;
+    };
+
     WriteRequest *io_uring_write_req_{nullptr};
     std::vector<struct iovec> iovecs_;
     int32_t keep_write_nw_;
@@ -1038,6 +1049,10 @@ private:
     // of the socket.
     int reg_fd_{-1};
     uint16_t recv_num_{0};
+
+    butil::IOBuf _tls_detect_buf;
+    std::unique_ptr<TlsRingContext> _tls_ring_ctx;
+    bool _tls_uses_ring{};
 
 #ifdef IO_URING_ENABLED
     friend class ::RingListener;

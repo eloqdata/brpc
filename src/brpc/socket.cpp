@@ -363,25 +363,6 @@ struct RegisteredRingBuffer {
 };
 #endif
 
-#ifdef IO_URING_ENABLED
-struct Socket::TlsRingContext {
-    TlsRingContext()
-        : mem_rbio(NULL)
-        , mem_wbio(NULL) {}
-
-    ~TlsRingContext() {
-        // Actual BIO lifetime is now owned by SSL after SSL_set_bio.
-        mem_rbio = NULL;
-        mem_wbio = NULL;
-    }
-
-    BIO* mem_rbio;
-    BIO* mem_wbio;
-    // Ciphertext drained from memory BIO waiting to be submitted via io_uring.
-    butil::IOBuf pending_cipher_out;
-};
-#endif
-
 struct BAIDU_CACHELINE_ALIGNMENT Socket::WriteRequest {
     static WriteRequest* const UNCONNECTED;
     
