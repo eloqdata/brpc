@@ -721,7 +721,7 @@ int Socket::DrainTlsCiphertext() {
     if (!_tls_ring_ctx || !_tls_ring_ctx->mem_wbio) {
         return 0;
     }
-    char buf[16 * 1024];
+    char buf[4 * 1024];
     int total = 0;
     while (BIO_pending(_tls_ring_ctx->mem_wbio) > 0) {
         int rc = BIO_read(_tls_ring_ctx->mem_wbio, buf, sizeof(buf));
@@ -749,6 +749,7 @@ int Socket::FlushTlsCiphertext() {
         }
         bthread::TaskGroup* g = bthread::TaskGroup::VolatileTLSTaskGroup();
         int rc = g->SocketWaitingNonFixedWrite(this);
+        LOG(INFO) << "SocketWaitingNonFixedWrite, return: " << rc;
         if (rc < 0) {
             errno = -rc;
             iovecs_.clear();
@@ -767,6 +768,7 @@ int Socket::FlushTlsCiphertext() {
 ssize_t Socket::ConsumeTlsPlaintext(size_t size_hint) {
     LOG(INFO) << "ConsumeTlsPlaintext, size_hint: " << size_hint;
     if (!_tls_ring_ctx || !_tls_ring_ctx->mem_rbio) {
+        LOG(INFO) << "ConsumeTlsPlaintext, !_tls_ring_ctx || !_tls_ring_ctx->mem_rbio, return 0";
         return 0;
     }
     ssize_t total = 0;
@@ -777,14 +779,18 @@ ssize_t Socket::ConsumeTlsPlaintext(size_t size_hint) {
         if (rc <= 0) {
             int ssl_err = SSL_get_error(_ssl_session, rc);
             if (ssl_err == SSL_ERROR_WANT_READ) {
+                LOG(INFO) << "ConsumeTlsPlaintext SSL_read, rc: " << rc
+                    << ", ssl_err: " << int(ssl_err);
                 break;
             }
             errno = (ssl_err == SSL_ERROR_ZERO_RETURN) ? ECONNRESET : ESSL;
+            LOG(INFO) << "ConsumeTlsPlaintext, errno: " << int(errno) << ", return -1";
             return -1;
         }
         _read_buf.append(buf, rc);
         total += rc;
     }
+    LOG(INFO) << "ConsumeTlsPlaintext, return total: " << total;
     return total;
 }
 
@@ -825,11 +831,12 @@ int Socket::ContinueTlsHandshake() {
         ERR_clear_error();
         int rc = SSL_do_handshake(_ssl_session);
         if (rc == 1) {
+            LOG(INFO) << "SSL_do_handshake return: " << rc << ", ssl_err: " << int(SSL_get_error(_ssl_session, rc));
             _ssl_state = SSL_CONNECTED;
             break;
         }
         const int ssl_err = SSL_get_error(_ssl_session, rc);
-        LOG(INFO) << "ssl_err: " << int(ssl_err);
+        LOG(INFO) << "SSL_do_handshake return: " << rc << ", ssl_err: " << int(ssl_err);
         if (ssl_err == SSL_ERROR_WANT_READ) {
             LOG(INFO) << "SSL_ERROR_WANT_READ";
             DrainTlsCiphertext();
@@ -874,7 +881,7 @@ ssize_t Socket::ProcessTlsRingData(const char* data, size_t len) {
     }
     LOG(INFO) << "_ssl_state: " << int(_ssl_state);
     if (_ssl_state == SSL_CONNECTING) {
-        LOG(INFO) << "SSL_CONNECTING, ContinueTlsHandshake";
+        LOG(INFO) << "ProcessTlsRingData SSL_CONNECTING, ContinueTlsHandshake";
         if (ContinueTlsHandshake() != 0) {
             return -1;
         }
@@ -882,11 +889,13 @@ ssize_t Socket::ProcessTlsRingData(const char* data, size_t len) {
             LOG(INFO) << "Socket=" << *this << " TLS handshake completed";
         }
     }
-    LOG(INFO) << "_ssl_state: " << int(_ssl_state);
+    LOG(INFO) << "ProcessTlsRingData _ssl_state: " << int(_ssl_state);
     if (_ssl_state != SSL_CONNECTED) {
+        LOG(INFO) << "ProcessTlsRingData, _ssl_state != SSL_CONNECTED, return 0, _ssl_state: " << int(_ssl_state);
         return 0;
     }
     ssize_t plain = ConsumeTlsPlaintext(len);
+    LOG(INFO) << "ProcessTlsRingData ConsumeTlsPlaintext result: " << plain;
     return plain < 0 ? -1 : plain;
 }
 
@@ -911,6 +920,7 @@ ssize_t Socket::HandleTlsRingRead(const char* data, size_t len) {
         // using TLS. The first handshake record needs at least 6 bytes.
         _tls_detect_buf.append(data, len);
         if (_tls_detect_buf.length() < 6) {
+            LOG(INFO) << "HandleTlsRingRead _tls_detect_buf.length() < 6, return eagain";
             errno = EAGAIN;
             return -errno;
         }
@@ -921,6 +931,7 @@ ssize_t Socket::HandleTlsRingRead(const char* data, size_t len) {
         if (s == SSL_CONNECTING) {
             if (EnsureTlsSessionForRing() != 0) {
                 errno = ESSL;
+                LOG(INFO) << "HandleTlsRingRead, return -1";
                 return -1;
             }
             _ssl_state = SSL_CONNECTING;
@@ -932,6 +943,7 @@ ssize_t Socket::HandleTlsRingRead(const char* data, size_t len) {
                       << cached.size() << " bytes)";
             ssize_t plain = ProcessTlsRingData(cached.data(), cached.size());
             if (plain == 0) {
+                LOG(INFO) << "HandleTlsRingRead ProcessTlsRingData 0, return EAGAIN";
                 errno = EAGAIN;
                 return -errno;
             }
@@ -956,6 +968,7 @@ ssize_t Socket::HandleTlsRingRead(const char* data, size_t len) {
         LOG(INFO) << "Socket=" << *this << " processing TLS ring data len=" << len;
         ssize_t plain = ProcessTlsRingData(data, len);
         if (plain == 0) {
+            LOG(INFO) << "HandleTlsRingRead ProcessTlsRingData 0, return EAGAIN";
             errno = EAGAIN;
             return -errno;
         }
@@ -2028,6 +2041,7 @@ int Socket::HandleEpollOutRequest(int error_code, EpollOutRequest* req) {
 
 void Socket::AfterAppConnected(int err, void* data) {
     WriteRequest* req = static_cast<WriteRequest*>(data);
+    LOG(INFO) << "socket: " << *req->socket << ", AfterAppConnected, keep write";
     if (err == 0) {
         Socket* const s = req->socket;
         SharedPart* sp = s->GetSharedPart();
@@ -2098,9 +2112,12 @@ void Socket::CheckConnectedAndKeepWrite(int fd, int err, void* data) {
     CHECK_GE(sockfd, 0);
     if (err == 0 && s->CheckConnected(sockfd) == 0
         && s->ResetFileDescriptor(sockfd) == 0) {
+        LOG(INFO) << "socket: " << *s << ", CheckConnectedAndKeepWrite 1";
         if (s->_app_connect) {
+            LOG(INFO) << "socket: " << *s << ", CheckConnectedAndKeepWrite s->_app_connect->StartConnect";
             s->_app_connect->StartConnect(req->socket, AfterAppConnected, req);
         } else {
+            LOG(INFO) << "socket: " << *s << ", CheckConnectedAndKeepWrite AfterAppConnected";
             // Successfully created a connection
             AfterAppConnected(0, req);
         }
@@ -2110,6 +2127,7 @@ void Socket::CheckConnectedAndKeepWrite(int fd, int err, void* data) {
         if (err == 0) {
             err = errno ? errno : -1;
         }
+        LOG(INFO) << "socket: " << *s << ", CheckConnectedAndKeepWrite else AfterAppConnected";
         AfterAppConnected(err, req);
     }
 }
