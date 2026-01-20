@@ -1796,6 +1796,7 @@ int Socket::WaitEpollOut(int fd, bool pollin, const timespec* abstime) {
     // health checker which called `SetFailed' before
     const int expected_val = _epollout_butex->load(butil::memory_order_relaxed);
     EventDispatcher& edisp = GetGlobalEventDispatcher(fd);
+    LOG(INFO) << "AddEpollOut socket: " << *this << boost::stacktrace::stacktrace();
     if (edisp.AddEpollOut(id(), fd, pollin) != 0) {
         return -1;
     }
@@ -1870,6 +1871,7 @@ int Socket::Connect(const timespec* abstime,
 
         // Add `sockfd' into epoll so that `HandleEpollOutRequest' will
         // be called with `req' when epoll event reaches
+        LOG(INFO) << "AddEpollOut socket: " << *this << boost::stacktrace::stacktrace();
         if (GetGlobalEventDispatcher(sockfd).
             AddEpollOut(connect_id, sockfd, false) != 0) {
             const int saved_errno = errno;
@@ -2659,6 +2661,10 @@ ssize_t Socket::DoWrite(WriteRequest* req) {
          } else {
             // System error with corresponding errno set
             PLOG(WARNING) << "Fail to write into ssl_fd=" << fd();
+             if (ssl_error == SSL_ERROR_SYSCALL && errno == 0) {
+                 // Connection is reset by remote.
+                 errno = ECONNRESET;
+             }
         }
         break;
     }
@@ -2882,6 +2888,10 @@ ssize_t Socket::DoRead(size_t size_hint) {
         } else {
             // System error with corresponding errno set
             PLOG(WARNING) << "Fail to read from ssl_fd=" << fd();
+            if (ssl_error == SSL_ERROR_SYSCALL && errno == 0) {
+                // Connection is reset by remote.
+                errno = ECONNRESET;
+            }
         }
         break;
     }
