@@ -671,7 +671,7 @@ int Socket::AddMemoryBIO(int fd) {
             BIO_flush(old_wbio);
         }
         SSL_set_bio(_ssl_session, mem_rbio, mem_wbio);
-        LOG(INFO) << "Socket=" << *this << " switched SSL BIO to memory (fd=" << fd << ")";
+        // LOG(INFO) << "Socket=" << *this << " switched SSL BIO to memory (fd=" << fd << ")";
     }
     _tls_ring_ctx->mem_rbio = mem_rbio;
     _tls_ring_ctx->mem_wbio = mem_wbio;
@@ -679,13 +679,13 @@ int Socket::AddMemoryBIO(int fd) {
 }
 
 int Socket::FeedTlsCiphertext(const void* data, size_t len) {
-    LOG(INFO) << "FeedTlsCiphertext, len: " << len;
+    // LOG(INFO) << "FeedTlsCiphertext, len: " << len;
     if (!_tls_ring_ctx || !_tls_ring_ctx->mem_rbio || len == 0) {
-        LOG(INFO) << "return 0";
+        // LOG(INFO) << "return 0";
         return 0;
     }
     const int nw = BIO_write(_tls_ring_ctx->mem_rbio, data, len);
-    LOG(INFO) << "nw: " << nw;
+    // LOG(INFO) << "nw: " << nw;
     if (nw <= 0) {
         return -1;
     }
@@ -706,14 +706,14 @@ int Socket::DrainTlsCiphertext() {
         _tls_ring_ctx->pending_cipher_out.append(buf, rc);
         total += rc;
     }
-    LOG_IF(INFO, total > 0) << "Socket=" << *this << " drained " << total << " bytes TLS ciphertext";
+    // LOG_IF(INFO, total > 0) << "Socket=" << *this << " drained " << total << " bytes TLS ciphertext";
     return total;
 }
 
 int Socket::FlushTlsCiphertext() {
-    LOG(INFO) << "FlushTlsCiphertext";
+    // LOG(INFO) << "FlushTlsCiphertext";
     if (!_tls_ring_ctx) {
-        LOG(INFO) << "return 0";
+        // LOG(INFO) << "return 0";
         return 0;
     }
     ssize_t total = 0;
@@ -724,7 +724,7 @@ int Socket::FlushTlsCiphertext() {
         }
         bthread::TaskGroup* g = bthread::TaskGroup::VolatileTLSTaskGroup();
         int rc = g->SocketWaitingNonFixedWrite(this);
-        LOG(INFO) << "SocketWaitingNonFixedWrite, return: " << rc;
+        // LOG(INFO) << "SocketWaitingNonFixedWrite, return: " << rc;
         if (rc < 0) {
             errno = -rc;
             iovecs_.clear();
@@ -734,16 +734,16 @@ int Socket::FlushTlsCiphertext() {
         total += rc;
         _tls_ring_ctx->pending_cipher_out.pop_front(rc);
         iovecs_.clear();
-        LOG(INFO) << "Socket=" << *this << " flushed " << rc << " bytes TLS ciphertext via io_uring";
+        // LOG(INFO) << "Socket=" << *this << " flushed " << rc << " bytes TLS ciphertext via io_uring";
     }
-    LOG(INFO) << "return total: " << total;
+    // LOG(INFO) << "return total: " << total;
     return total;
 }
 
 ssize_t Socket::ConsumeTlsPlaintext(size_t size_hint) {
-    LOG(INFO) << "ConsumeTlsPlaintext, size_hint: " << size_hint;
+    // LOG(INFO) << "ConsumeTlsPlaintext, size_hint: " << size_hint;
     if (!_tls_ring_ctx || !_tls_ring_ctx->mem_rbio) {
-        LOG(INFO) << "ConsumeTlsPlaintext, !_tls_ring_ctx || !_tls_ring_ctx->mem_rbio, return 0";
+        // LOG(INFO) << "ConsumeTlsPlaintext, !_tls_ring_ctx || !_tls_ring_ctx->mem_rbio, return 0";
         return 0;
     }
     ssize_t total = 0;
@@ -754,18 +754,18 @@ ssize_t Socket::ConsumeTlsPlaintext(size_t size_hint) {
         if (rc <= 0) {
             int ssl_err = SSL_get_error(_ssl_session, rc);
             if (ssl_err == SSL_ERROR_WANT_READ) {
-                LOG(INFO) << "ConsumeTlsPlaintext SSL_read, rc: " << rc
-                    << ", ssl_err: " << int(ssl_err);
+                // LOG(INFO) << "ConsumeTlsPlaintext SSL_read, rc: " << rc
+                //     << ", ssl_err: " << int(ssl_err);
                 break;
             }
             errno = (ssl_err == SSL_ERROR_ZERO_RETURN) ? ECONNRESET : ESSL;
-            LOG(INFO) << "ConsumeTlsPlaintext, errno: " << int(errno) << ", return -1";
+            // LOG(INFO) << "ConsumeTlsPlaintext, errno: " << int(errno) << ", return -1";
             return -1;
         }
         _read_buf.append(buf, rc);
         total += rc;
     }
-    LOG(INFO) << "ConsumeTlsPlaintext, return total: " << total;
+    // LOG(INFO) << "ConsumeTlsPlaintext, return total: " << total;
     return total;
 }
 
@@ -778,7 +778,7 @@ int Socket::EnsureTlsSessionForRing() {
         return -1;
     }
     if (_ssl_session == NULL) {
-        LOG(INFO) << "Socket=" << *this << " creating TLS session";
+        // LOG(INFO) << "Socket=" << *this << " creating TLS session";
         _ssl_session = CreateSSLSession(_ssl_ctx->raw_ctx, id(), fd(), true);
         if (_ssl_session == NULL) {
             LOG(ERROR) << "Socket=" << *this << " failed to create SSL session";
@@ -787,14 +787,14 @@ int Socket::EnsureTlsSessionForRing() {
         }
         SSL_set_accept_state(_ssl_session);
     } else {
-        LOG(INFO) << "Socket=" << *this << " reusing existing TLS session";
+        // LOG(INFO) << "Socket=" << *this << " reusing existing TLS session";
     }
     if (AddMemoryBIO(fd()) != 0) {
         LOG(ERROR) << "Socket=" << *this << " failed to bind memory BIO";
         errno = ESSL;
         return -1;
     }
-    LOG(INFO) << "Socket=" << *this << " initialized TLS session for io_uring";
+    // LOG(INFO) << "Socket=" << *this << " initialized TLS session for io_uring";
     return 0;
 }
 
@@ -802,18 +802,18 @@ int Socket::ContinueTlsHandshake() {
     // Drive SSL handshake until it completes or requires more data. Any
     // handshake output is drained and submitted via io_uring.
     while (_ssl_state == SSL_CONNECTING) {
-        LOG(INFO) << "ContinueTlsHandshake _ssl_state: " << int(_ssl_state);
+        // LOG(INFO) << "ContinueTlsHandshake _ssl_state: " << int(_ssl_state);
         ERR_clear_error();
         int rc = SSL_do_handshake(_ssl_session);
         if (rc == 1) {
-            LOG(INFO) << "SSL_do_handshake return: " << rc << ", ssl_err: " << int(SSL_get_error(_ssl_session, rc));
+            // LOG(INFO) << "SSL_do_handshake return: " << rc << ", ssl_err: " << int(SSL_get_error(_ssl_session, rc));
             _ssl_state = SSL_CONNECTED;
             break;
         }
         const int ssl_err = SSL_get_error(_ssl_session, rc);
-        LOG(INFO) << "SSL_do_handshake return: " << rc << ", ssl_err: " << int(ssl_err);
+        // LOG(INFO) << "SSL_do_handshake return: " << rc << ", ssl_err: " << int(ssl_err);
         if (ssl_err == SSL_ERROR_WANT_READ) {
-            LOG(INFO) << "SSL_ERROR_WANT_READ";
+            // LOG(INFO) << "SSL_ERROR_WANT_READ";
             DrainTlsCiphertext();
             if (!_tls_ring_ctx->pending_cipher_out.empty()) {
                 if (FlushTlsCiphertext() < 0) {
@@ -822,7 +822,7 @@ int Socket::ContinueTlsHandshake() {
                                  << berror(errno);
                     return -1;
                 }
-                LOG(INFO) << "Socket=" << *this << " flushed TLS handshake data after WANT_READ";
+                // LOG(INFO) << "Socket=" << *this << " flushed TLS handshake data after WANT_READ";
             }
             break;
         } else if (ssl_err == SSL_ERROR_WANT_WRITE) {
@@ -832,7 +832,7 @@ int Socket::ContinueTlsHandshake() {
                              << " failed to flush TLS handshake: " << berror(errno);
                 return -1;
             }
-            LOG(INFO) << "Socket=" << *this << " flushed TLS handshake data via io_uring";
+            // LOG(INFO) << "Socket=" << *this << " flushed TLS handshake data via io_uring";
         } else {
             LOG(WARNING) << "Socket=" << *this << " TLS handshake error: "
                          << SSLError(ERR_get_error());
@@ -847,30 +847,30 @@ ssize_t Socket::ProcessTlsRingData(const char* data, size_t len) {
     // Feed ciphertext into the SSL read BIO and, if handshake is still in
     // progress, continue driving it. When fully connected, decrypt plaintext
     // into _read_buf.
-    LOG(INFO) << "Socket=" << *this << ", ProcessTlsRingData, len: " << len;
+    // LOG(INFO) << "Socket=" << *this << ", ProcessTlsRingData, len: " << len;
     if (len > 0) {
         if (FeedTlsCiphertext(data, len) < 0) {
             errno = ESSL;
             return -1;
         }
     }
-    LOG(INFO) << "_ssl_state: " << int(_ssl_state);
+    // LOG(INFO) << "_ssl_state: " << int(_ssl_state);
     if (_ssl_state == SSL_CONNECTING) {
-        LOG(INFO) << "ProcessTlsRingData SSL_CONNECTING, ContinueTlsHandshake";
+        // LOG(INFO) << "ProcessTlsRingData SSL_CONNECTING, ContinueTlsHandshake";
         if (ContinueTlsHandshake() != 0) {
             return -1;
         }
         if (_ssl_state == SSL_CONNECTED) {
-            LOG(INFO) << "Socket=" << *this << " TLS handshake completed";
+            // LOG(INFO) << "Socket=" << *this << " TLS handshake completed";
         }
     }
-    LOG(INFO) << "ProcessTlsRingData _ssl_state: " << int(_ssl_state);
+    // LOG(INFO) << "ProcessTlsRingData _ssl_state: " << int(_ssl_state);
     if (_ssl_state != SSL_CONNECTED) {
-        LOG(INFO) << "ProcessTlsRingData, _ssl_state != SSL_CONNECTED, return 0, _ssl_state: " << int(_ssl_state);
+        // LOG(INFO) << "ProcessTlsRingData, _ssl_state != SSL_CONNECTED, return 0, _ssl_state: " << int(_ssl_state);
         return 0;
     }
     ssize_t plain = ConsumeTlsPlaintext(len);
-    LOG(INFO) << "ProcessTlsRingData ConsumeTlsPlaintext result: " << plain;
+    // LOG(INFO) << "ProcessTlsRingData ConsumeTlsPlaintext result: " << plain;
     return plain < 0 ? -1 : plain;
 }
 
@@ -902,7 +902,7 @@ ssize_t Socket::HandleTlsRingRead(const char* data, size_t len) {
         char header[6];
         _tls_detect_buf.copy_to(header, 6);
         SSLState s = DetectSSLStateInBuffer(header, 6);
-        LOG(INFO) << "Socket=" << *this << " DetectSSLStateInBuffer, ssl state: " << int(s);
+        // LOG(INFO) << "Socket=" << *this << " DetectSSLStateInBuffer, ssl state: " << int(s);
         if (s == SSL_CONNECTING) {
             if (EnsureTlsSessionForRing() != 0) {
                 errno = ESSL;
@@ -914,11 +914,11 @@ ssize_t Socket::HandleTlsRingRead(const char* data, size_t len) {
             cached.resize(_tls_detect_buf.size());
             _tls_detect_buf.copy_to(cached.data(), cached.size());
             _tls_detect_buf.clear();
-            LOG(INFO) << "Socket=" << *this << " detected TLS over io_uring (cached="
-                      << cached.size() << " bytes)";
+            // LOG(INFO) << "Socket=" << *this << " detected TLS over io_uring (cached="
+            //           << cached.size() << " bytes)";
             ssize_t plain = ProcessTlsRingData(cached.data(), cached.size());
             if (plain == 0) {
-                LOG(INFO) << "HandleTlsRingRead ProcessTlsRingData 0, return EAGAIN";
+                // LOG(INFO) << "HandleTlsRingRead ProcessTlsRingData 0, return EAGAIN";
                 errno = EAGAIN;
                 return -errno;
             }
@@ -932,24 +932,24 @@ ssize_t Socket::HandleTlsRingRead(const char* data, size_t len) {
                 errno = ESSL;
                 return -1;
             }
-            LOG(INFO) << "Socket=" << *this << " treated as non-TLS over io_uring,"
-                      << " appended " << plain << " bytes";
+            // LOG(INFO) << "Socket=" << *this << " treated as non-TLS over io_uring,"
+            //           << " appended " << plain << " bytes";
             return plain;
         }
     }
     if (_ssl_state == SSL_CONNECTING || _ssl_state == SSL_CONNECTED) {
         // Once we know the connection is TLS, all incoming ciphertext goes
         // through ProcessTlsRingData.
-        LOG(INFO) << "Socket=" << *this << " processing TLS ring data len=" << len;
+        // LOG(INFO) << "Socket=" << *this << " processing TLS ring data len=" << len;
         ssize_t plain = ProcessTlsRingData(data, len);
         if (plain == 0) {
-            LOG(INFO) << "HandleTlsRingRead ProcessTlsRingData 0, return EAGAIN";
+            // LOG(INFO) << "HandleTlsRingRead ProcessTlsRingData 0, return EAGAIN";
             errno = EAGAIN;
             return -errno;
         }
         return plain;
     }
-    LOG(INFO) << "Socket=" << *this << " treating ring data as plaintext len=" << len;
+    // LOG(INFO) << "Socket=" << *this << " treating ring data as plaintext len=" << len;
     _read_buf.append(data, len);
     return len;
 }
@@ -1007,12 +1007,12 @@ int Socket::ResetFileDescriptor(int fd, size_t bound_gid) {
 
     EnableKeepaliveIfNeeded(fd);
 
-    LOG(INFO) << "ResetFileDescriptor" << boost::stacktrace::stacktrace();
+    // LOG(INFO) << "ResetFileDescriptor" << boost::stacktrace::stacktrace();
     if (_on_edge_triggered_events) {
 #ifdef IO_URING_ENABLED
       if (FLAGS_use_io_uring &&
         _on_edge_triggered_events == InputMessenger::OnNewMessagesFromRing) {
-          LOG(INFO) << "io_uring SocketRegister";
+          // LOG(INFO) << "io_uring SocketRegister";
         bthread_attr_t attr;
         attr = BTHREAD_ATTR_NORMAL;
 
@@ -1032,7 +1032,7 @@ int Socket::ResetFileDescriptor(int fd, size_t bound_gid) {
           }
       } else {
 #endif
-          LOG(INFO) << "GetGlobalEventDispatcher(fd).AddConsumer";
+          // LOG(INFO) << "GetGlobalEventDispatcher(fd).AddConsumer";
         if (GetGlobalEventDispatcher(fd).AddConsumer(id(), fd) != 0) {
           PLOG(ERROR) << "Fail to add SocketId=" << id()
                       << " into EventDispatcher";
@@ -1796,7 +1796,7 @@ int Socket::WaitEpollOut(int fd, bool pollin, const timespec* abstime) {
     // health checker which called `SetFailed' before
     const int expected_val = _epollout_butex->load(butil::memory_order_relaxed);
     EventDispatcher& edisp = GetGlobalEventDispatcher(fd);
-    LOG(INFO) << "AddEpollOut socket: " << *this << boost::stacktrace::stacktrace();
+    // LOG(INFO) << "AddEpollOut socket: " << *this << boost::stacktrace::stacktrace();
     if (edisp.AddEpollOut(id(), fd, pollin) != 0) {
         return -1;
     }
@@ -1871,7 +1871,7 @@ int Socket::Connect(const timespec* abstime,
 
         // Add `sockfd' into epoll so that `HandleEpollOutRequest' will
         // be called with `req' when epoll event reaches
-        LOG(INFO) << "AddEpollOut socket: " << *this << boost::stacktrace::stacktrace();
+        // LOG(INFO) << "AddEpollOut socket: " << *this << boost::stacktrace::stacktrace();
         if (GetGlobalEventDispatcher(sockfd).
             AddEpollOut(connect_id, sockfd, false) != 0) {
             const int saved_errno = errno;
@@ -2018,7 +2018,7 @@ int Socket::HandleEpollOutRequest(int error_code, EpollOutRequest* req) {
 
 void Socket::AfterAppConnected(int err, void* data) {
     WriteRequest* req = static_cast<WriteRequest*>(data);
-    LOG(INFO) << "socket: " << *req->socket << ", AfterAppConnected, keep write";
+    // LOG(INFO) << "socket: " << *req->socket << ", AfterAppConnected, keep write";
     if (err == 0) {
         Socket* const s = req->socket;
         SharedPart* sp = s->GetSharedPart();
@@ -2089,12 +2089,12 @@ void Socket::CheckConnectedAndKeepWrite(int fd, int err, void* data) {
     CHECK_GE(sockfd, 0);
     if (err == 0 && s->CheckConnected(sockfd) == 0
         && s->ResetFileDescriptor(sockfd) == 0) {
-        LOG(INFO) << "socket: " << *s << ", CheckConnectedAndKeepWrite 1";
+        // LOG(INFO) << "socket: " << *s << ", CheckConnectedAndKeepWrite 1";
         if (s->_app_connect) {
-            LOG(INFO) << "socket: " << *s << ", CheckConnectedAndKeepWrite s->_app_connect->StartConnect";
+            // LOG(INFO) << "socket: " << *s << ", CheckConnectedAndKeepWrite s->_app_connect->StartConnect";
             s->_app_connect->StartConnect(req->socket, AfterAppConnected, req);
         } else {
-            LOG(INFO) << "socket: " << *s << ", CheckConnectedAndKeepWrite AfterAppConnected";
+            // LOG(INFO) << "socket: " << *s << ", CheckConnectedAndKeepWrite AfterAppConnected";
             // Successfully created a connection
             AfterAppConnected(0, req);
         }
@@ -2104,7 +2104,7 @@ void Socket::CheckConnectedAndKeepWrite(int fd, int err, void* data) {
         if (err == 0) {
             err = errno ? errno : -1;
         }
-        LOG(INFO) << "socket: " << *s << ", CheckConnectedAndKeepWrite else AfterAppConnected";
+        // LOG(INFO) << "socket: " << *s << ", CheckConnectedAndKeepWrite else AfterAppConnected";
         AfterAppConnected(err, req);
     }
 }
@@ -2426,7 +2426,7 @@ void* Socket::KeepWrite(void* void_arg) {
             s->ReturnSuccessfulWriteRequest(saved_req);
         }
         const ssize_t nw = s->DoWrite(req);
-        LOG(INFO) << "Socket: " << *s << " KeepWrite DoWrite nw: " << nw;
+        // LOG(INFO) << "Socket: " << *s << " KeepWrite DoWrite nw: " << nw;
         if (nw < 0) {
             if (errno != EAGAIN && errno != EOVERCROWDED) {
                 const int saved_errno = errno;
@@ -2699,7 +2699,7 @@ ssize_t Socket::DoWriteTlsRing(WriteRequest* req, butil::IOBuf* data_list[], siz
                                  << berror(errno);
                     return -1;
                 }
-                LOG(INFO) << "Socket=" << *this << " TLS WANT_WRITE resolved, retrying";
+                // LOG(INFO) << "Socket=" << *this << " TLS WANT_WRITE resolved, retrying";
                 continue;
             }
 
@@ -2720,7 +2720,7 @@ ssize_t Socket::DoWriteTlsRing(WriteRequest* req, butil::IOBuf* data_list[], siz
                      << berror(errno);
         return -1;
     }
-    LOG(INFO) << "Socket=" << *this << " wrote TLS plaintext=" << total_plain;
+    // LOG(INFO) << "Socket=" << *this << " wrote TLS plaintext=" << total_plain;
 
     return total_plain;
 }
@@ -2760,8 +2760,8 @@ int Socket::SSLHandshake(int fd, bool server_mode) {
     while (true) {
         ERR_clear_error();
         int rc = SSL_do_handshake(_ssl_session);
-        LOG(INFO) << "SSLHandshake: " << *this << ", " << boost::stacktrace::stacktrace()
-            << ", rc: " << rc;
+        // LOG(INFO) << "SSLHandshake: " << *this << ", " << boost::stacktrace::stacktrace()
+        //     << ", rc: " << rc;
         if (rc == 1) {
             _ssl_state = SSL_CONNECTED;
 #ifdef IO_URING_ENABLED
@@ -2778,7 +2778,7 @@ int Socket::SSLHandshake(int fd, bool server_mode) {
         }
 
         int ssl_error = SSL_get_error(_ssl_session, rc);
-        LOG(INFO) << "ssl_error: " << ssl_error;
+        // LOG(INFO) << "ssl_error: " << ssl_error;
         switch (ssl_error) {
         case SSL_ERROR_WANT_READ:
 #if defined(OS_LINUX)
@@ -3834,7 +3834,7 @@ void Socket::NotifyWaitingNonFixedWrite(int nw) {
 }
 
 int Socket::CopyDataRead() {
-    LOG(INFO) << "socket: " << *this << ", CopyDataRead";
+    // LOG(INFO) << "socket: " << *this << ", CopyDataRead";
     bthread::TaskGroup *cur_group = bound_g_;
     CHECK(static_cast<uint64_t>(buf_idx_) < in_bufs_.size());
     auto &rbuf = in_bufs_[buf_idx_];
@@ -3845,7 +3845,7 @@ int Socket::CopyDataRead() {
 #ifdef IO_URING_ENABLED
         if (FLAGS_use_io_uring && FLAGS_enable_ssl_io_uring && _ssl_state != SSL_OFF) {
             ssize_t plain = HandleTlsRingRead(buf_head, rbuf.bytes_);
-            LOG(INFO) << "HandleTlsRingRead, plain: " << plain;
+            // LOG(INFO) << "HandleTlsRingRead, plain: " << plain;
             if (plain < 0) {
                 ret = -errno;
                 goto END;
