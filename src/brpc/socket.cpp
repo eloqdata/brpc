@@ -537,10 +537,7 @@ Socket::Socket(Forbidden)
     , _unwritten_bytes(0)
     , _epollout_butex(NULL)
     , _write_head(NULL)
-#ifdef IO_URING_ENABLED
     , _tls_ring_ctx()
-    , _tls_uses_ring(false)
-#endif
     , _stream_set(NULL)
     , _total_streams_unconsumed_size(0)
     , _ninflight_app_health_check(0)
@@ -641,13 +638,11 @@ int Socket::InitTlsRingContext(int /*fd*/) {
         LOG(ERROR) << "Fail to allocate TlsRingContext";
         return -1;
     }
-    _tls_uses_ring = true;
     return 0;
 }
 
 void Socket::DestroyTlsRingContext() {
     _tls_ring_ctx.reset();
-    _tls_uses_ring = false;
 }
 
 int Socket::AddMemoryBIO(int fd) {
@@ -666,7 +661,7 @@ int Socket::AddMemoryBIO(int fd) {
         if (mem_wbio) {
             BIO_free(mem_wbio);
         }
-        LOG(ERROR) << "Fail to create memory BIO for TLS ring";
+        LOG(ERROR) << "Fail to create memory BIO for TLS ring, socket: " << *this;
         return -1;
     }
     {
@@ -676,8 +671,7 @@ int Socket::AddMemoryBIO(int fd) {
             BIO_flush(old_wbio);
         }
         SSL_set_bio(_ssl_session, mem_rbio, mem_wbio);
-        LOG_IF(INFO, FLAGS_enable_ssl_io_uring)
-            << "Socket=" << *this << " switched SSL BIO to memory (fd=" << fd << ")";
+        LOG(INFO) << "Socket=" << *this << " switched SSL BIO to memory (fd=" << fd << ")";
     }
     _tls_ring_ctx->mem_rbio = mem_rbio;
     _tls_ring_ctx->mem_wbio = mem_wbio;
@@ -2430,6 +2424,7 @@ void* Socket::KeepWrite(void* void_arg) {
             s->ReturnSuccessfulWriteRequest(saved_req);
         }
         const ssize_t nw = s->DoWrite(req);
+        LOG(INFO) << "Socket: " << *s << " KeepWrite DoWrite nw: " << nw;
         if (nw < 0) {
             if (errno != EAGAIN && errno != EOVERCROWDED) {
                 const int saved_errno = errno;

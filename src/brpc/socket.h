@@ -1052,7 +1052,6 @@ private:
 
     butil::IOBuf _tls_detect_buf;
     std::unique_ptr<TlsRingContext> _tls_ring_ctx;
-    bool _tls_uses_ring{};
 
 #ifdef IO_URING_ENABLED
     friend class ::RingListener;

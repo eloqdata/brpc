@@ -38,6 +38,7 @@
 #include "bthread/ring_write_buf_pool.h"
 
 DECLARE_bool(use_io_uring);
+DECLARE_bool(enable_ssl_io_uring);
 
 namespace bthread {
 extern BAIDU_THREAD_LOCAL TaskGroup *tls_task_group;
@@ -173,7 +174,7 @@ ParseResult ParseRedisMessage(butil::IOBuf* source, Socket* socket,
 #ifdef IO_URING_ENABLED
         char *ring_buf = nullptr;
         uint16_t ring_buf_idx = UINT16_MAX;
-        if (FLAGS_use_io_uring) {
+        if (FLAGS_use_io_uring && !FLAGS_enable_ssl_io_uring) {
             std::tie(ring_buf, ring_buf_idx) = cur_group->GetRingWriteBuf();
             if (ring_buf_idx != UINT16_MAX) {
                 appender.set_ring_buffer(ring_buf, RingWriteBufferPool::buf_length);
