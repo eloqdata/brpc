@@ -146,7 +146,6 @@ int EventDispatcher::AddEpollOut(SocketId socket_id, int fd, bool pollin) {
         errno = EINVAL;
         return -1;
     }
-    LOG(INFO) << "AddEpollOut fd: " << fd << boost::stacktrace::stacktrace();
 
     epoll_event evt;
     evt.data.u64 = socket_id;
@@ -171,7 +170,6 @@ int EventDispatcher::AddEpollOut(SocketId socket_id, int fd, bool pollin) {
 
 int EventDispatcher::RemoveEpollOut(SocketId socket_id, 
                                     int fd, bool pollin) {
-    LOG(INFO) << "RemoveEpollOut fd: " << fd << ", pollin: " << pollin << boost::stacktrace::stacktrace();
     if (pollin) {
         epoll_event evt;
         evt.data.u64 = socket_id;

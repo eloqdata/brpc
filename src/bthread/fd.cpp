@@ -141,15 +141,15 @@ public:
             PLOG(FATAL) << "Fail to epoll_create/kqueue";
             return -1;
         }
-        LOG(INFO) << "Start epoll thread, run_this" << boost::stacktrace::stacktrace();
+        // LOG(INFO) << "Start epoll thread, run_this" << boost::stacktrace::stacktrace();
 
         if (FLAGS_use_pthread_epoll_thread) {
-            LOG(INFO) << "Start pthread epoll thread";
+            // LOG(INFO) << "Start pthread epoll thread";
             _thd = std::thread(EpollThread::run_this, this);
             _tid = 1;
             return 0;
         }
-        LOG(INFO) << "Start bthread epoll thread";
+        // LOG(INFO) << "Start bthread epoll thread";
         if (bthread_start_background(
                 &_tid, NULL, EpollThread::run_this, this) != 0) {
             close(_epfd);

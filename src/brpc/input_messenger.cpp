@@ -421,12 +421,12 @@ void InputMessenger::OnNewMessagesFromRing(Socket *m) {
     InputMessageClosure last_msg;
     bool read_eof = false;
     while (!read_eof && m->buf_idx_ < m->in_bufs_.size()) {
-        LOG(INFO) << "m->buf_idx: " << m->buf_idx_  << ", m->in_bufs_.size(): " << m->in_bufs_.size();
+        // LOG(INFO) << "m->buf_idx: " << m->buf_idx_  << ", m->in_bufs_.size(): " << m->in_bufs_.size();
         const int64_t received_us = butil::cpuwide_time_us();
         const int64_t base_realtime = butil::gettimeofday_us() - received_us;
 
         const ssize_t nr = m->CopyDataRead();
-        LOG(INFO) << "CopyDataRead nr: " << nr << ", read_buf size: " << m->_read_buf.size();
+        // LOG(INFO) << "CopyDataRead nr: " << nr << ", read_buf size: " << m->_read_buf.size();
 
         if (nr <= 0) {
             if (0 == nr) {
@@ -583,7 +583,7 @@ int InputMessenger::Create(SocketOptions options, SocketId* id) {
     {
 #endif
 #ifdef IO_URING_ENABLED
-        LOG(INFO) << "InputMessenger::Create, " << boost::stacktrace::stacktrace();
+        // LOG(INFO) << "InputMessenger::Create, " << boost::stacktrace::stacktrace();
         options.on_edge_triggered_events = FLAGS_use_io_uring ? OnNewMessagesFromRing : OnNewMessages;
 #else
         options.on_edge_triggered_events = OnNewMessages;
