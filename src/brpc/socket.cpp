@@ -2310,6 +2310,10 @@ ssize_t Socket::DoWrite(WriteRequest* req) {
          } else {
             // System error with corresponding errno set
             PLOG(WARNING) << "Fail to write into ssl_fd=" << fd();
+             if (ssl_error == SSL_ERROR_SYSCALL && errno == 0) {
+                 // Connection is reset by remote.
+                 errno = ECONNRESET;
+             }
         }
         break;
     }
@@ -2465,6 +2469,10 @@ ssize_t Socket::DoRead(size_t size_hint) {
         } else {
             // System error with corresponding errno set
             PLOG(WARNING) << "Fail to read from ssl_fd=" << fd();
+            if (ssl_error == SSL_ERROR_SYSCALL && errno == 0) {
+                // Connection is reset by remote.
+                errno = ECONNRESET;
+            }
         }
         break;
     }
