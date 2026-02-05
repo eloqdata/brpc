@@ -118,6 +118,16 @@ set(DYNAMIC_LIB
     dl
     )
 
+find_path(GLOG_INCLUDE_PATH NAMES glog/logging.h)
+find_library(GLOG_LIB NAMES glog VERSION ">=0.6.0" REQUIRED)
+
+if((NOT GLOG_INCLUDE_PATH) OR(NOT GLOG_LIB))
+    message(FATAL_ERROR "Fail to find glog")
+endif()
+
+include_directories(${GLOG_INCLUDE_PATH})
+set(DYNAMIC_LIB ${DYNAMIC_LIB} ${GLOG_LIB})
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     set(DYNAMIC_LIB ${DYNAMIC_LIB}
         pthread
@@ -134,6 +144,8 @@ endif()
 
 add_executable(echo_client client.cpp ${PROTO_SRC} ${PROTO_HEADER})
 add_executable(echo_server server.cpp ${PROTO_SRC} ${PROTO_HEADER})
+add_executable(benchmark_echo benchmark.cpp ${PROTO_SRC} ${PROTO_HEADER})
 
 target_link_libraries(echo_client ${BRPC_LIB} ${DYNAMIC_LIB})
 target_link_libraries(echo_server ${BRPC_LIB} ${DYNAMIC_LIB})
+target_link_libraries(benchmark_echo ${BRPC_LIB} ${DYNAMIC_LIB})

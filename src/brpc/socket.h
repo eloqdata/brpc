@@ -660,7 +660,8 @@ public:
     // Push pending ciphertext to io_uring (synchronous submit).
     int FlushTlsCiphertext();
     // Pull decrypted plaintext from SSL into _read_buf.
-    ssize_t ConsumeTlsPlaintext(size_t size_hint);
+    // ssize_t ConsumeTlsPlaintext(size_t size_hint);
+    ssize_t ConsumeTlsPlaintext();
 #endif
 private:
     DISALLOW_COPY_AND_ASSIGN(Socket);
@@ -698,7 +699,7 @@ friend void DereferenceSocket(Socket*);
     // success, -1 otherwise and errno is set
     ssize_t DoWrite(WriteRequest* req);
 #ifdef IO_URING_ENABLED
-    ssize_t DoWriteTlsRing(WriteRequest* req, butil::IOBuf* data_list[], size_t ndata);
+    ssize_t DoWriteTlsRing(WriteRequest* req, butil::IOBuf* data_list[], size_t ndata, int* ssl_error);
     // io_uring TLS helpers for read path
     int EnsureTlsSessionForRing();
     int ContinueTlsHandshake();
