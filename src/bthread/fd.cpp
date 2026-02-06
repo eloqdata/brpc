@@ -26,6 +26,8 @@
 #include <sys/types.h>                           // struct kevent
 #include <sys/event.h>                           // kevent(), kqueue()
 #endif
+#include <boost/stacktrace/stacktrace.hpp>
+
 #include "butil/atomicops.h"
 #include "butil/time.h"
 #include "butil/fd_utility.h"                     // make_non_blocking
@@ -38,6 +40,9 @@
 // Implement bthread functions on file descriptors
 
 namespace bthread {
+
+DEFINE_bool(use_pthread_epoll_thread, true,
+        "Use separate pthreads as event dispatcher to do epoll.");
 
 extern BAIDU_THREAD_LOCAL TaskGroup* tls_task_group;
 
@@ -136,6 +141,15 @@ public:
             PLOG(FATAL) << "Fail to epoll_create/kqueue";
             return -1;
         }
+        // LOG(INFO) << "Start epoll thread, run_this" << boost::stacktrace::stacktrace();
+
+        if (FLAGS_use_pthread_epoll_thread) {
+            // LOG(INFO) << "Start pthread epoll thread";
+            _thd = std::thread(EpollThread::run_this, this);
+            _tid = 1;
+            return 0;
+        }
+        // LOG(INFO) << "Start bthread epoll thread";
         if (bthread_start_background(
                 &_tid, NULL, EpollThread::run_this, this) != 0) {
             close(_epfd);
@@ -185,10 +199,15 @@ public:
             return -1;
         }
 
-        const int rc = bthread_join(_tid, NULL);
-        if (rc) {
-            LOG(FATAL) << "Fail to join EpollThread, " << berror(rc);
-            return -1;
+        if (FLAGS_use_pthread_epoll_thread) {
+            _thd.join();
+            _tid = 0;
+        } else {
+            const int rc = bthread_join(_tid, NULL);
+            if (rc) {
+                LOG(FATAL) << "Fail to join EpollThread, " << berror(rc);
+                return -1;
+            }
         }
         close(closing_epoll_pipe[0]);
         close(closing_epoll_pipe[1]);
@@ -392,6 +411,7 @@ private:
 
     int _epfd;
     bool _stop;
+    std::thread _thd;
     bthread_t _tid;
     butil::Mutex _start_mutex;
 };

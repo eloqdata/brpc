@@ -23,6 +23,7 @@
 #include "bthread/task_control.h"
 #include "bthread/task_group.h"
 #include <unordered_map>
+#include <boost/stacktrace/stacktrace.hpp>
 
 extern "C" {
 extern void bthread_flush();
@@ -210,6 +211,7 @@ int EventDispatcher::RemoveConsumer(int fd) {
     // epoll_wait will keep returning events of the fd continuously, making
     // program abnormal.
     if (epoll_ctl(_epfd, EPOLL_CTL_DEL, fd, NULL) < 0) {
+        LOG(INFO) << "RemoveConsumer fd: " << fd << " stack trace: " << boost::stacktrace::stacktrace();
         PLOG(WARNING) << "Fail to remove fd=" << fd << " from epfd=" << _epfd;
         return -1;
     }
