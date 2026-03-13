@@ -79,6 +79,7 @@ namespace eloq {
             registered_modules[i] = registered_modules[i + 1];
             i++;
         }
+        registered_modules[registered_modules.size() - 1] = nullptr;
         registered_module_cnt.fetch_sub(1, std::memory_order_release);
         lk.unlock();
 
