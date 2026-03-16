@@ -1316,10 +1316,10 @@ bool TaskGroup::HasTasks() {
 }
 
 void TaskGroup::CheckAndUpdateModules() {
-    const int registered_module_count =
-            registered_module_cnt.load(std::memory_order_acquire);
-    if (modules_cnt_ != registered_module_count) {
+    if (modules_cnt_ != registered_module_cnt.load(std::memory_order_acquire)) {
         std::shared_lock lk(eloq::module_mutex);
+        const int registered_module_count =
+                registered_module_cnt.load(std::memory_order_acquire);
         const auto old_registered_modules = registered_modules_;
         registered_modules_ = registered_modules;
         lk.unlock();
