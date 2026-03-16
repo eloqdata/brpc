@@ -44,6 +44,13 @@ namespace eloq {
         }
         registered_modules[i] = module;
         registered_module_cnt.fetch_add(1, std::memory_order_release);
+        const auto non_null_modules =
+                std::count_if(registered_modules.begin(), registered_modules.end(),
+                              [](EloqModule *registered_module) {
+                                  return registered_module != nullptr;
+                              });
+        CHECK_EQ(static_cast<int>(non_null_modules),
+                 registered_module_cnt.load(std::memory_order_acquire));
         return 0;
     }
 
@@ -81,6 +88,13 @@ namespace eloq {
         }
         registered_modules[registered_modules.size() - 1] = nullptr;
         registered_module_cnt.fetch_sub(1, std::memory_order_release);
+        const auto non_null_modules =
+                std::count_if(registered_modules.begin(), registered_modules.end(),
+                              [](EloqModule *registered_module) {
+                                  return registered_module != nullptr;
+                              });
+        CHECK_EQ(static_cast<int>(non_null_modules),
+                 registered_module_cnt.load(std::memory_order_acquire));
         lk.unlock();
 
         while (module->registered_workers_.load(std::memory_order_acquire) != 0) {
