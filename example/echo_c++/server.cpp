@@ -28,6 +28,10 @@ DEFINE_string(listen_addr, "", "Server listen address, may be IPV4/IPV6/UDS."
             " If this is set, the flag port will be ignored");
 DEFINE_int32(idle_timeout_s, -1, "Connection will be closed if there is no "
              "read/write operations during the last `idle_timeout_s'");
+DEFINE_bool(ssl, true, "Enable TLS server");
+DEFINE_string(certificate, "../cert.pem", "Certificate file path to enable SSL");
+DEFINE_string(private_key, "../key.pem", "Private key file path to enable SSL");
+DEFINE_string(ciphers, "", "Cipher suite used for SSL connections");
 
 // Your implementation of example::EchoService
 // Notice that implementing brpc::Describable grants the ability to put
@@ -104,6 +108,12 @@ int main(int argc, char* argv[]) {
     // Start the server.
     brpc::ServerOptions options;
     options.idle_timeout_sec = FLAGS_idle_timeout_s;
+    if (FLAGS_ssl) {
+        options.mutable_ssl_options()->default_cert.certificate = FLAGS_certificate;
+        options.mutable_ssl_options()->default_cert.private_key = FLAGS_private_key;
+        options.mutable_ssl_options()->ciphers = FLAGS_ciphers;
+    }
+    options.num_threads = 1;
     if (server.Start(point, &options) != 0) {
         LOG(ERROR) << "Fail to start EchoServer";
         return -1;

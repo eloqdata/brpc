@@ -21,6 +21,7 @@
 
 #include <iostream>                            // std::ostream
 #include <deque>                               // std::deque
+#include <memory>                              // std::unique_ptr
 #include <set>                                 // std::set
 #include "butil/atomicops.h"                    // butil::atomic
 #include "bthread/types.h"                      // bthread_id_t
@@ -48,6 +49,8 @@ struct InboundRingBuf;
 namespace bthread {
 class TaskGroup;
 }
+
+typedef struct bio_st BIO;
 
 namespace brpc {
 namespace policy {
@@ -277,6 +280,9 @@ friend class policy::H2GlobalStreamCreator;
     class SharedPart;
     struct Forbidden {};
     struct WriteRequest;
+#ifdef IO_URING_ENABLED
+    struct TlsRingContext;
+#endif
 
 public:
     const static int STREAM_FAKE_FD = INT_MAX;
@@ -351,6 +357,7 @@ public:
             {}
 #endif
     };
+
 
 #ifdef IO_URING_ENABLED
     int Write(char *ring_buf, uint16_t ring_buf_idx, uint32_t ring_buf_size,
@@ -642,6 +649,19 @@ public:
     int CopyDataRead();
     void ClearInboundBuf();
     bool RecycleInBackgroundIfNecessary();
+    // TLS memory BIO helpers (io_uring path only).
+    int InitTlsRingContext(int fd);
+    void DestroyTlsRingContext();
+    int AddMemoryBIO(int fd);
+    // Push ciphertext read from io_uring into SSL's memory BIO.
+    int FeedTlsCiphertext(const void* data, size_t len);
+    // Drain encrypted bytes from SSL's memory BIO to pending buffer.
+    int DrainTlsCiphertext();
+    // Push pending ciphertext to io_uring (synchronous submit).
+    int FlushTlsCiphertext();
+    // Pull decrypted plaintext from SSL into _read_buf.
+    // ssize_t ConsumeTlsPlaintext(size_t size_hint);
+    ssize_t ConsumeTlsPlaintext();
 #endif
 private:
     DISALLOW_COPY_AND_ASSIGN(Socket);
@@ -678,6 +698,14 @@ friend void DereferenceSocket(Socket*);
     // `req' using the corresponding method. Returns written bytes on
     // success, -1 otherwise and errno is set
     ssize_t DoWrite(WriteRequest* req);
+#ifdef IO_URING_ENABLED
+    ssize_t DoWriteTlsRing(WriteRequest* req, butil::IOBuf* data_list[], size_t ndata, int* ssl_error);
+    // io_uring TLS helpers for read path
+    int EnsureTlsSessionForRing();
+    int ContinueTlsHandshake();
+    ssize_t ProcessTlsRingData(const char* data, size_t len);
+    ssize_t HandleTlsRingRead(const char* data, size_t len);
+#endif
 
     // Called before returning to pool.
     void OnRecycle();
@@ -989,6 +1017,24 @@ private:
     std::shared_ptr<SocketKeepaliveOptions> _keepalive_options;
 
     // These fields are only for io_uring build.
+
+    struct TlsRingContext {
+        TlsRingContext()
+            : mem_rbio(NULL)
+            , mem_wbio(NULL) {}
+
+        ~TlsRingContext() {
+            // Actual BIO lifetime is now owned by SSL after SSL_set_bio.
+            mem_rbio = NULL;
+            mem_wbio = NULL;
+        }
+
+        BIO* mem_rbio;
+        BIO* mem_wbio;
+        // Ciphertext drained from memory BIO waiting to be submitted via io_uring.
+        butil::IOBuf pending_cipher_out;
+    };
+
     WriteRequest *io_uring_write_req_{nullptr};
     std::vector<struct iovec> iovecs_;
     int32_t keep_write_nw_;
@@ -1004,6 +1050,9 @@ private:
     // of the socket.
     int reg_fd_{-1};
     uint16_t recv_num_{0};
+
+    butil::IOBuf _tls_detect_buf;
+    std::unique_ptr<TlsRingContext> _tls_ring_ctx;
 
 #ifdef IO_URING_ENABLED
     friend class ::RingListener;
