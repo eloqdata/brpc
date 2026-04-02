@@ -21,6 +21,7 @@
 
 #include "butil/compat.h"
 #include <new>                                   // std::nothrow
+#include <thread>
 #include <sys/poll.h>                            // poll()
 #if defined(OS_MACOSX)
 #include <sys/types.h>                           // struct kevent
@@ -39,6 +40,9 @@
 
 namespace bthread {
 
+
+DEFINE_bool(use_pthread_epoll_thread, true,
+        "Use separate pthreads as event dispatcher to do epoll.");
 extern BAIDU_THREAD_LOCAL TaskGroup* tls_task_group;
 
 template <typename T, size_t NBLOCK, size_t BLOCK_SIZE>
@@ -116,6 +120,12 @@ public:
         , _tid(0) {
     }
 
+    ~EpollThread() {
+        if (_thd.joinable()) {
+            stop_and_join();
+        }
+    }
+
     int start(int epoll_size) {
         if (started()) {
             return -1;
@@ -136,6 +146,11 @@ public:
             PLOG(FATAL) << "Fail to epoll_create/kqueue";
             return -1;
         }
+	if (FLAGS_use_pthread_epoll_thread) {
+            _thd = std::thread(EpollThread::run_this, this);
+            _tid = 1;
+            return 0;
+        }
         if (bthread_start_background(
                 &_tid, NULL, EpollThread::run_this, this) != 0) {
             close(_epfd);
@@ -152,6 +167,10 @@ public:
     // worker pthreads and completion of g_task_control.stop().
     int stop_and_join() {
         if (!started()) {
+            if (_thd.joinable()) {
+                _thd.join();
+                _tid = 0;
+            }
             return 0;
         }
         // No matter what this function returns, _epfd will be set to -1
@@ -185,11 +204,17 @@ public:
             return -1;
         }
 
-        const int rc = bthread_join(_tid, NULL);
-        if (rc) {
-            LOG(FATAL) << "Fail to join EpollThread, " << berror(rc);
-            return -1;
-        }
+	if (_thd.joinable()) {
+            _thd.join();
+            _tid = 0;
+        } else {
+            const int rc = bthread_join(_tid, NULL);
+            if (rc) {
+                LOG(FATAL) << "Fail to join EpollThread, " << berror(rc);
+                return -1;
+            }
+            _tid = 0;
+	}
         close(closing_epoll_pipe[0]);
         close(closing_epoll_pipe[1]);
         close(saved_epfd);
@@ -393,6 +418,7 @@ private:
     int _epfd;
     bool _stop;
     bthread_t _tid;
+    std::thread _thd;
     butil::Mutex _start_mutex;
 };
 
