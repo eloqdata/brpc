@@ -229,6 +229,7 @@ public:
 
     std::array<eloq::EloqModule *, 10> registered_modules_{};
     int modules_cnt_{0};
+    uint64_t modules_version_{0};
 
 #ifdef IO_URING_ENABLED
     int RegisterSocket(SocketRegisterData *data);
