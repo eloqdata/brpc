@@ -28,6 +28,7 @@ bthread::TaskControl *bthread_get_task_control();
 
 extern std::array<eloq::EloqModule *, 10> registered_modules;
 extern std::atomic<int> registered_module_cnt;
+extern std::atomic<uint64_t> registered_module_version;
 
 namespace eloq {
     bool EloqModule::NotifyWorker(int thd_id) {
@@ -44,6 +45,7 @@ namespace eloq {
         }
         registered_modules[i] = module;
         registered_module_cnt.fetch_add(1, std::memory_order_release);
+        registered_module_version.fetch_add(1, std::memory_order_release);
         const auto non_null_modules =
                 std::count_if(registered_modules.begin(), registered_modules.end(),
                               [](EloqModule *registered_module) {
@@ -88,6 +90,7 @@ namespace eloq {
         }
         registered_modules[registered_modules.size() - 1] = nullptr;
         registered_module_cnt.fetch_sub(1, std::memory_order_release);
+        registered_module_version.fetch_add(1, std::memory_order_release);
         const auto non_null_modules =
                 std::count_if(registered_modules.begin(), registered_modules.end(),
                               [](EloqModule *registered_module) {

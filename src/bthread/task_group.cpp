@@ -47,6 +47,7 @@
 
 std::array<eloq::EloqModule *, 10> registered_modules;
 std::atomic<int> registered_module_cnt;
+std::atomic<uint64_t> registered_module_version;
 
 DEFINE_int32(steal_task_rnd, 100, "Steal task frequency in wait_task");
 DEFINE_bool(brpc_worker_as_ext_processor, false, "Work as external processor");
@@ -1316,8 +1317,12 @@ bool TaskGroup::HasTasks() {
 }
 
 void TaskGroup::CheckAndUpdateModules() {
-    if (modules_cnt_ != registered_module_cnt.load(std::memory_order_acquire)) {
+    const uint64_t global_version =
+        registered_module_version.load(std::memory_order_acquire);
+    if (modules_version_ != global_version) {
         std::shared_lock lk(eloq::module_mutex);
+        const uint64_t current_version =
+            registered_module_version.load(std::memory_order_acquire);
         const int registered_module_count =
                 registered_module_cnt.load(std::memory_order_acquire);
         const auto old_registered_modules = registered_modules_;
@@ -1327,27 +1332,35 @@ void TaskGroup::CheckAndUpdateModules() {
             return module != nullptr;
         });
         CHECK_EQ(static_cast<int>(new_module_cnt), registered_module_count);
-        // new modules
-        for (auto i = modules_cnt_; i < new_module_cnt; ++i) {
-            registered_modules_[i]->registered_workers_.fetch_add(1, std::memory_order_relaxed);
+
+        for (auto* new_m : registered_modules_) {
+            if (new_m == nullptr) {
+                continue;
+            }
+            const bool found = std::find(old_registered_modules.begin(),
+                                         old_registered_modules.end(),
+                                         new_m) != old_registered_modules.end();
+            if (!found) {
+                new_m->registered_workers_.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
         }
-        // deleted modules
-        if (new_module_cnt < modules_cnt_) {
-            for (auto* old_m : old_registered_modules) {
-                bool found = false;
-                for (auto* new_m : registered_modules_) {
-                    if (new_m == old_m) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    old_m->registered_workers_.fetch_sub(1, std::memory_order_relaxed);
-                }
+
+        for (auto* old_m : old_registered_modules) {
+            if (old_m == nullptr) {
+                continue;
+            }
+            const bool found = std::find(registered_modules_.begin(),
+                                         registered_modules_.end(),
+                                         old_m) != registered_modules_.end();
+            if (!found) {
+                old_m->registered_workers_.fetch_sub(
+                    1, std::memory_order_relaxed);
             }
         }
 
         modules_cnt_ = static_cast<int>(new_module_cnt);
+        modules_version_ = current_version;
     }
 }
 
