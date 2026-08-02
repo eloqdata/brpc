@@ -41,6 +41,9 @@ DEFINE_int32(task_group_runqueue_capacity, 4096,
 DEFINE_int32(task_group_yield_before_idle, 0,
              "TaskGroup yields so many times before idle");
 DECLARE_bool(use_io_uring);
+#ifdef IO_URING_ENABLED
+DECLARE_bool(brpc_use_event_fd_wakeup);
+#endif
 
 namespace bthread {
 
@@ -280,6 +283,16 @@ void TaskControl::stop_and_join() {
     for (int i = 0; i < _parking_lot_num; ++i) {
         _pl[i].stop();
     }
+#ifdef IO_URING_ENABLED
+    if (FLAGS_brpc_use_event_fd_wakeup) {
+        // Workers in this mode wait in io_uring rather than on the parking
+        // lot. Reuse the scheduler's normal eventfd notification so shutdown
+        // does not depend on a signal interrupting io_uring_enter.
+        for (int i = 0; i < _parking_lot_num; ++i) {
+            _groups[i]->Notify();
+        }
+    }
+#endif
     // Interrupt blocking operations.
     for (size_t i = 0; i < _workers.size(); ++i) {
         interrupt_pthread(_workers[i]);

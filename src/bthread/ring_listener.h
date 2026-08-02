@@ -128,17 +128,7 @@ public:
 
     int Init();
 
-    void Close() {
-        if (ring_init_) {
-            io_uring_queue_exit(&ring_);
-            ring_init_ = false;
-        }
-
-        if (in_buf_) {
-            free(in_buf_);
-            in_buf_ = nullptr;
-        }
-    }
+    void Close();
 
     int Register(SocketRegisterData *data);
 
@@ -172,6 +162,16 @@ public:
     size_t ExtPoll();
 
     void ExtWakeup();
+
+    // Wakes a worker blocked in WaitForCqe through the poll request registered
+    // on wakeup_event_fd_. This is only used when
+    // FLAGS_brpc_use_event_fd_wakeup was enabled at startup.
+    void NotifyEventFd();
+
+    // Blocks the owning worker until this ring has at least one completion.
+    // DEFER_TASKRUN requires every io_uring_enter call to come from the ring's
+    // single issuer, so the legacy polling thread must never call this method.
+    int WaitForCqe();
 
     void Run();
 
@@ -209,6 +209,7 @@ private:
         NonFixedWriteFinish,
         WaitingNonFixedWrite,
         Fsync,
+        SchedulerWakeup,
         Noop = 255
     };
 
@@ -232,6 +233,8 @@ private:
                 return 7;
             case OpCode::Fsync:
                 return 8;
+            case OpCode::SchedulerWakeup:
+                return 9;
             default:
                 return UINT8_MAX;
         }
@@ -257,6 +260,8 @@ private:
                 return OpCode::WaitingNonFixedWrite;
             case 8:
                 return OpCode::Fsync;
+            case 9:
+                return OpCode::SchedulerWakeup;
             default:
                 return OpCode::Noop;
         }
@@ -270,6 +275,11 @@ private:
 
     void RecycleReturnedWriteBufs();
 
+    // Installs the persistent multishot poll used for scheduler wakeups.
+    int ArmEventFdPoll();
+
+    void DrainEventFd();
+
     enum struct PollStatus : uint8_t { Active = 0, Sleep, ExtPoll, Closed };
 
     struct io_uring ring_;
@@ -282,6 +292,7 @@ private:
     std::mutex mux_;
     std::condition_variable cv_;
     std::thread poll_thd_;
+    int wakeup_event_fd_{-1};
 
     io_uring_buf_ring *in_buf_ring_{nullptr};
     char *in_buf_{nullptr};

@@ -21,8 +21,11 @@
 #include <cstdint>
 #include <errno.h>
 #include <cstring>
+#include <poll.h>
 #include <string>
 #include <sys/resource.h>
+#include <sys/eventfd.h>
+#include <unistd.h>
 
 #include <gflags/gflags.h>
 
@@ -43,19 +46,39 @@ DEFINE_int32(io_uring_registered_files, 1024,
              "inbound listener");
 DEFINE_int32(io_uring_write_buffer_pool_size, 1024,
              "Number of buffers kept in the io_uring-based write buffer pool.");
+DECLARE_bool(brpc_use_event_fd_wakeup);
+
+void RingListener::Close() {
+    if (ring_init_) {
+        io_uring_queue_exit(&ring_);
+        ring_init_ = false;
+    }
+
+    if (wakeup_event_fd_ >= 0) {
+        close(wakeup_event_fd_);
+        wakeup_event_fd_ = -1;
+    }
+
+    if (in_buf_) {
+        free(in_buf_);
+        in_buf_ = nullptr;
+    }
+}
 
 RingListener::~RingListener() {
-    for (auto [fd, fd_idx]: reg_fds_) {
-        SocketUnRegisterData data;
-        data.fd_ = fd;
-        SubmitCancel(&data);
-        // Not wait here because the worker should have quit already.
-    }
-    SubmitAll();
+    if (!FLAGS_brpc_use_event_fd_wakeup) {
+        for (auto [fd, fd_idx]: reg_fds_) {
+            SocketUnRegisterData data;
+            data.fd_ = fd;
+            SubmitCancel(&data);
+            // Not wait here because the worker should have quit already.
+        }
+        SubmitAll();
 
-    poll_status_.store(PollStatus::Closed, std::memory_order_release); {
-        std::unique_lock<std::mutex> lk(mux_);
-        cv_.notify_one();
+        poll_status_.store(PollStatus::Closed, std::memory_order_release); {
+            std::unique_lock<std::mutex> lk(mux_);
+            cv_.notify_one();
+        }
     }
 
     if (poll_thd_.joinable()) {
@@ -112,7 +135,11 @@ int RingListener::Init() {
 
     const unsigned write_buf_slots = static_cast<unsigned>(flag_write_buffers);
 
-    int ret = io_uring_queue_init(queue_entries, &ring_, IORING_SETUP_SINGLE_ISSUER);
+    unsigned ring_flags = IORING_SETUP_SINGLE_ISSUER;
+    if (FLAGS_brpc_use_event_fd_wakeup) {
+        ring_flags |= IORING_SETUP_DEFER_TASKRUN | IORING_SETUP_TASKRUN_FLAG;
+    }
+    int ret = io_uring_queue_init(queue_entries, &ring_, ring_flags);
 
     if (ret < 0) {
         LOG(WARNING) << "Failed to initialize the IO uring of the inbound "
@@ -206,17 +233,39 @@ int RingListener::Init() {
             std::make_unique<RingWriteBufferPool>(write_buf_slots, &ring_);
 
     if (write_buf_pool_->buf_pool_.empty()) {
+        Close();
         return -1;
     }
 
     poll_status_.store(PollStatus::Sleep, std::memory_order_release);
-    poll_thd_ = std::thread([&]() {
-        std::string ring_listener = "ring_listener:";
-        ring_listener.append(std::to_string(task_group_->group_id_));
-        butil::PlatformThread::SetName(ring_listener.c_str());
+    if (FLAGS_brpc_use_event_fd_wakeup) {
+        wakeup_event_fd_ = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+        if (wakeup_event_fd_ < 0) {
+            const int saved_errno = errno;
+            LOG(ERROR) << "Failed to create the brpc worker wakeup eventfd, errno: "
+                       << saved_errno << " (" << strerror(saved_errno) << ")";
+            Close();
+            return -saved_errno;
+        }
+        ret = ArmEventFdPoll();
+        if (ret != 0) {
+            Close();
+            return ret;
+        }
+        ret = SubmitAll();
+        if (ret < 0) {
+            Close();
+            return ret;
+        }
+    } else {
+        poll_thd_ = std::thread([&]() {
+            std::string ring_listener = "ring_listener:";
+            ring_listener.append(std::to_string(task_group_->group_id_));
+            butil::PlatformThread::SetName(ring_listener.c_str());
 
-        Run();
-    });
+            Run();
+        });
+    }
 
     return 0;
 }
@@ -443,6 +492,83 @@ int RingListener::SubmitAll() {
     return ret;
 }
 
+int RingListener::ArmEventFdPoll() {
+    io_uring_sqe *sqe = io_uring_get_sqe(&ring_);
+    if (sqe == nullptr) {
+        LOG(ERROR) << "Failed to get an SQE for the brpc worker wakeup eventfd";
+        return -EAGAIN;
+    }
+
+    io_uring_prep_poll_multishot(sqe, wakeup_event_fd_, POLLIN);
+    io_uring_sqe_set_data64(sqe, OpCodeToInt(OpCode::SchedulerWakeup));
+    ++submit_cnt_;
+    return 0;
+}
+
+void RingListener::DrainEventFd() {
+    uint64_t value = 0;
+    while (true) {
+        const ssize_t nread = read(wakeup_event_fd_, &value, sizeof(value));
+        if (nread == static_cast<ssize_t>(sizeof(value))) {
+            return;
+        }
+        if (nread < 0 && errno == EINTR) {
+            continue;
+        }
+        // EAGAIN means another notification consumer already drained the
+        // counter. There is only one consumer today, but treating it as
+        // drained keeps this helper safe if that implementation changes.
+        if (nread < 0 && errno == EAGAIN) {
+            return;
+        }
+        const int saved_errno = errno;
+        LOG(FATAL) << "Failed to drain the brpc worker wakeup eventfd, errno: "
+                   << saved_errno << " (" << strerror(saved_errno) << ")";
+    }
+}
+
+void RingListener::NotifyEventFd() {
+    const uint64_t one = 1;
+    while (true) {
+        const ssize_t nwritten = write(wakeup_event_fd_, &one, sizeof(one));
+        if (nwritten == static_cast<ssize_t>(sizeof(one))) {
+            return;
+        }
+        if (nwritten < 0 && errno == EINTR) {
+            continue;
+        }
+        // A saturated eventfd is already readable, so the outstanding poll is
+        // sufficient to wake the worker. Notifications are also coalesced by
+        // TaskGroup::_notified, making this path exceptional.
+        if (nwritten < 0 && errno == EAGAIN) {
+            return;
+        }
+        const int saved_errno = errno;
+        LOG(FATAL) << "Failed to notify the brpc worker wakeup eventfd, errno: "
+                   << saved_errno << " (" << strerror(saved_errno) << ")";
+    }
+}
+
+int RingListener::WaitForCqe() {
+    int ret;
+    do {
+        ret = io_uring_submit_and_wait(&ring_, 1);
+    } while (ret == -EAGAIN);
+
+    if (ret >= 0) {
+        submit_cnt_ = submit_cnt_ >= ret ? submit_cnt_ - ret : 0;
+        cqe_ready_.store(true, std::memory_order_relaxed);
+        return 0;
+    }
+    // TaskControl interrupts worker pthreads during shutdown. Returning on
+    // EINTR lets the scheduler observe the stopped parking-lot state.
+    if (ret == -EINTR) {
+        return ret;
+    }
+    LOG(FATAL) << "Failed while waiting on the brpc worker io_uring, ret: " << ret;
+    return ret;
+}
+
 void RingListener::PollAndNotify() {
     io_uring_cqe *cqe = nullptr;
     while (true) {
@@ -505,6 +631,9 @@ size_t RingListener::ExtPoll() {
 }
 
 void RingListener::ExtWakeup() {
+    if (FLAGS_brpc_use_event_fd_wakeup) {
+        return;
+    }
     has_external_.store(false, std::memory_order_relaxed);
     if (poll_status_.load(std::memory_order_relaxed) != PollStatus::Sleep) {
         return;
@@ -709,6 +838,20 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
             RingFsyncData *fsync_data = reinterpret_cast<RingFsyncData *>(data >> 16);
             int res = cqe->res;
             fsync_data->Notify(res);
+            break;
+        }
+        case OpCode::SchedulerWakeup: {
+            if (cqe->res < 0) {
+                LOG(FATAL) << "The brpc worker wakeup poll failed, ret: "
+                           << cqe->res;
+            }
+            DrainEventFd();
+            // A multishot poll stays armed after each readiness event. Losing
+            // IORING_CQE_F_MORE means the scheduler can no longer wake this
+            // worker, so fail instead of allowing a future permanent sleep.
+            if (!(cqe->flags & IORING_CQE_F_MORE)) {
+                LOG(FATAL) << "The brpc worker multishot wakeup poll terminated";
+            }
             break;
         }
         default:

@@ -52,6 +52,9 @@ std::atomic<uint64_t> registered_module_version;
 DEFINE_int32(steal_task_rnd, 100, "Steal task frequency in wait_task");
 DEFINE_bool(brpc_worker_as_ext_processor, false, "Work as external processor");
 DECLARE_bool(use_io_uring);
+#ifdef IO_URING_ENABLED
+DECLARE_bool(brpc_use_event_fd_wakeup);
+#endif
 
 namespace bthread {
 
@@ -328,6 +331,10 @@ int TaskGroup::init(size_t runqueue_capacity) {
     _main_stack = stk;
     _last_run_ns = butil::cpuwide_time_ns();
 #ifdef IO_URING_ENABLED
+    if (FLAGS_brpc_use_event_fd_wakeup && !FLAGS_use_io_uring) {
+        LOG(FATAL) << "brpc_use_event_fd_wakeup requires use_io_uring";
+        return -1;
+    }
     if (FLAGS_use_io_uring) {
         ring_listener_ = std::make_unique<RingListener>(this);
         int ret = ring_listener_->Init();
@@ -1221,6 +1228,12 @@ void TaskGroup::Notify() {
         bool expect = false;
         // Only one caller gets the right to notify the worker.
         if (_notified.compare_exchange_strong(expect, true)) {
+#ifdef IO_URING_ENABLED
+            if (FLAGS_brpc_use_event_fd_wakeup) {
+                ring_listener_->NotifyEventFd();
+                return;
+            }
+#endif
             std::unique_lock<std::mutex> lk(_mux);
             _notified.store(true, std::memory_order_release);
             _cv.notify_one();
@@ -1233,6 +1246,12 @@ bool TaskGroup::NotifyIfWaiting() {
         bool expect = false;
         // Only one caller gets the right to notify the worker.
         if (_notified.compare_exchange_strong(expect, true)) {
+#ifdef IO_URING_ENABLED
+            if (FLAGS_brpc_use_event_fd_wakeup) {
+                ring_listener_->NotifyEventFd();
+                return true;
+            }
+#endif
             std::unique_lock<std::mutex> lk(_mux);
             _notified.store(true, std::memory_order_release);
             _cv.notify_one();
@@ -1246,10 +1265,7 @@ bool TaskGroup::Wait(){
     _waiting.store(true, std::memory_order_release);
     _waiting_workers.fetch_add(1, std::memory_order_relaxed);
 
-    std::unique_lock<std::mutex> lk(_mux);
-    // Before waiting and sleeping, reset the _notified status.
-    _notified.store(false, std::memory_order_release);
-    _cv.wait(lk, [this]()->bool {
+    const auto has_work = [this]()->bool {
         // Clear the _notified status every time the worker wakes up.
         _notified.store(false, std::memory_order_release);
         // No need to check _rq since _rq can only be pushed by itself.
@@ -1267,7 +1283,31 @@ bool TaskGroup::Wait(){
         // Check any module registered or deleted before checking modules' tasks.
         CheckAndUpdateModules();
         return HasTasks();
-    });
+    };
+
+#ifdef IO_URING_ENABLED
+    if (FLAGS_brpc_use_event_fd_wakeup) {
+        // has_work() clears _notified. If a producer races before or after that
+        // check, eventfd retains the wakeup until submit_and_wait observes it.
+        // A stop may happen immediately before this worker tries to sleep. A
+        // worker that is already blocked is woken through eventfd by
+        // TaskControl::stop_and_join().
+#ifndef BTHREAD_DONT_SAVE_PARKING_STATE
+        _last_pl_state = _pl->get_state();
+        const bool stopped = _last_pl_state.stopped();
+#else
+        const bool stopped = false;
+#endif
+        if (!stopped && !has_work()) {
+            ring_listener_->WaitForCqe();
+        }
+        _notified.store(false, std::memory_order_release);
+    } else
+#endif
+    {
+        std::unique_lock<std::mutex> lk(_mux);
+        _cv.wait(lk, has_work);
+    }
     _waiting.store(false, std::memory_order_release);
     _waiting_workers.fetch_sub(1, std::memory_order_relaxed);
     return true;
