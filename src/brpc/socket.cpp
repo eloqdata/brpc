@@ -64,7 +64,7 @@
 DEFINE_bool(dispatch_lazily, false, "dispatcher lazily creates task");
 #ifdef IO_URING_ENABLED
 DEFINE_bool(use_io_uring, false, "Use IO URING to do the polling.");
-DEFINE_bool(brpc_use_event_fd_wakeup, false,
+DEFINE_bool(brpc_use_event_fd_wakeup, true,
             "Wake up idle brpc workers through eventfd polled by io_uring. "
             "Requires use_io_uring and is fixed at startup.");
 #endif
