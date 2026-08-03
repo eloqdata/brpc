@@ -1292,13 +1292,11 @@ bool TaskGroup::Wait(){
         // A stop may happen immediately before this worker tries to sleep. A
         // worker that is already blocked is woken through eventfd by
         // TaskControl::stop_and_join().
+        const ParkingLot::State pl_state = _pl->get_state();
 #ifndef BTHREAD_DONT_SAVE_PARKING_STATE
-        _last_pl_state = _pl->get_state();
-        const bool stopped = _last_pl_state.stopped();
-#else
-        const bool stopped = false;
+        _last_pl_state = pl_state;
 #endif
-        if (!stopped && !has_work()) {
+        if (!pl_state.stopped() && !has_work()) {
             ring_listener_->WaitForCqe();
         }
         _notified.store(false, std::memory_order_release);
