@@ -201,7 +201,7 @@ FORCE:
 test_butil:$(TEST_BUTIL_OBJS) | libbrpc.dbg.$(SOEXT)
 	@echo "> Linking $@"
 ifeq ($(SYSTEM),Linux)
-	$(CXX) -o $@ $(LIBPATHS) $(SOPATHS) -Xlinker "-(" $^ -Xlinker "-)" $(STATIC_LINKINGS) $(UT_DYNAMIC_LINKINGS)
+	$(CXX) -no-pie -o $@ $(LIBPATHS) $(SOPATHS) -Xlinker "-(" $^ -Xlinker "-)" $(STATIC_LINKINGS) $(UT_DYNAMIC_LINKINGS)
 else ifeq ($(SYSTEM),Darwin)
 	$(CXX) -o $@ $(LIBPATHS) $(SOPATHS) $^ $(STATIC_LINKINGS) $(UT_DYNAMIC_LINKINGS)
 endif
