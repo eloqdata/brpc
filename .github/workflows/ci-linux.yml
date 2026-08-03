@@ -15,7 +15,7 @@ env:
 
 jobs:
   gcc-compile-with-make:
-    runs-on: ubuntu-20.04 # https://github.com/actions/runner-images
+    runs-on: ubuntu-24.04 # https://github.com/actions/runner-images
     steps:
     - uses: actions/checkout@v2
     - uses: ./.github/actions/install-essential-dependences
@@ -27,7 +27,7 @@ jobs:
            make -j ${{env.proc_num}}
 
   gcc-compile-with-cmake:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v2
     - uses: ./.github/actions/install-essential-dependences
@@ -43,7 +43,7 @@ jobs:
            make -j ${{env.proc_num}}
 
   gcc-compile-with-bazel:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v2
     - name: install dependences
@@ -56,7 +56,7 @@ jobs:
            bazel build -j ${{env.proc_num}} -c opt --copt -DHAVE_ZLIB=1 //...
 
   gcc-compile-with-make-all-options:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v2
     - uses: ./.github/actions/install-all-dependences
@@ -68,7 +68,7 @@ jobs:
            make -j ${{env.proc_num}}
 
   gcc-compile-with-cmake-all-options:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v2
     - uses: ./.github/actions/install-all-dependences
@@ -84,7 +84,7 @@ jobs:
            make -j ${{env.proc_num}}
 
   gcc-compile-with-bazel-all-options:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v2
     - name: install dependences
@@ -98,7 +98,7 @@ jobs:
 
 
   clang-compile-with-make:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v2
     - uses: ./.github/actions/install-essential-dependences
@@ -110,7 +110,7 @@ jobs:
            make -j ${{env.proc_num}}
 
   clang-compile-with-cmake:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v2
     - uses: ./.github/actions/install-essential-dependences
@@ -126,7 +126,7 @@ jobs:
            make -j ${{env.proc_num}}
 
   clang-compile-with-bazel:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v2
     - name: install dependences
@@ -139,7 +139,7 @@ jobs:
            bazel build -j ${{env.proc_num}} -c opt --copt -DHAVE_ZLIB=1 //...
 
   clang-compile-with-make-all-options:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v2
     - uses: ./.github/actions/install-all-dependences
@@ -151,7 +151,7 @@ jobs:
            make -j ${{env.proc_num}}
 
   clang-compile-with-cmake-all-options:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v2
     - uses: ./.github/actions/install-all-dependences
@@ -167,7 +167,7 @@ jobs:
            make -j ${{env.proc_num}}
 
   clang-compile-with-bazel-all-options:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v2
     - name: install dependences
@@ -180,7 +180,7 @@ jobs:
            bazel build -j ${{env.proc_num}} -c opt --define with_mesalink=false --define with_glog=true --define with_thrift=true --copt -DHAVE_ZLIB=1 //...
 
   clang-unittest:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v2
     - uses: ./.github/actions/install-essential-dependences
