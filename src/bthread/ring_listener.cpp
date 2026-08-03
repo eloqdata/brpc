@@ -46,7 +46,7 @@ DEFINE_int32(io_uring_registered_files, 1024,
              "inbound listener");
 DEFINE_int32(io_uring_write_buffer_pool_size, 1024,
              "Number of buffers kept in the io_uring-based write buffer pool.");
-DECLARE_bool(brpc_use_event_fd_wakeup);
+DECLARE_bool(use_io_uring);
 
 void RingListener::Close() {
     if (ring_init_) {
@@ -66,7 +66,7 @@ void RingListener::Close() {
 }
 
 RingListener::~RingListener() {
-    if (!FLAGS_brpc_use_event_fd_wakeup) {
+    if (!FLAGS_use_io_uring) {
         for (auto [fd, fd_idx]: reg_fds_) {
             SocketUnRegisterData data;
             data.fd_ = fd;
@@ -135,10 +135,9 @@ int RingListener::Init() {
 
     const unsigned write_buf_slots = static_cast<unsigned>(flag_write_buffers);
 
-    unsigned ring_flags = IORING_SETUP_SINGLE_ISSUER;
-    if (FLAGS_brpc_use_event_fd_wakeup) {
-        ring_flags |= IORING_SETUP_DEFER_TASKRUN | IORING_SETUP_TASKRUN_FLAG;
-    }
+    unsigned ring_flags = IORING_SETUP_SINGLE_ISSUER |
+                          IORING_SETUP_DEFER_TASKRUN |
+                          IORING_SETUP_TASKRUN_FLAG;
     int ret = io_uring_queue_init(queue_entries, &ring_, ring_flags);
 
     if (ret < 0) {
@@ -237,7 +236,7 @@ int RingListener::Init() {
     }
 
     poll_status_.store(PollStatus::Sleep, std::memory_order_release);
-    if (FLAGS_brpc_use_event_fd_wakeup) {
+    if (FLAGS_use_io_uring) {
         wakeup_event_fd_ = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
         if (wakeup_event_fd_ < 0) {
             const int saved_errno = errno;
@@ -627,7 +626,7 @@ size_t RingListener::ExtPoll() {
 }
 
 void RingListener::ExtWakeup() {
-    if (FLAGS_brpc_use_event_fd_wakeup) {
+    if (FLAGS_use_io_uring) {
         return;
     }
     has_external_.store(false, std::memory_order_relaxed);

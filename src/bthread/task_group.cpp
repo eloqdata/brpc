@@ -52,9 +52,6 @@ std::atomic<uint64_t> registered_module_version;
 DEFINE_int32(steal_task_rnd, 100, "Steal task frequency in wait_task");
 DEFINE_bool(brpc_worker_as_ext_processor, false, "Work as external processor");
 DECLARE_bool(use_io_uring);
-#ifdef IO_URING_ENABLED
-DECLARE_bool(brpc_use_event_fd_wakeup);
-#endif
 
 namespace bthread {
 
@@ -331,10 +328,6 @@ int TaskGroup::init(size_t runqueue_capacity) {
     _main_stack = stk;
     _last_run_ns = butil::cpuwide_time_ns();
 #ifdef IO_URING_ENABLED
-    if (FLAGS_brpc_use_event_fd_wakeup && !FLAGS_use_io_uring) {
-        LOG(FATAL) << "brpc_use_event_fd_wakeup requires use_io_uring";
-        return -1;
-    }
     if (FLAGS_use_io_uring) {
         ring_listener_ = std::make_unique<RingListener>(this);
         int ret = ring_listener_->Init();
@@ -1229,7 +1222,7 @@ void TaskGroup::Notify() {
         // Only one caller gets the right to notify the worker.
         if (_notified.compare_exchange_strong(expect, true)) {
 #ifdef IO_URING_ENABLED
-            if (FLAGS_brpc_use_event_fd_wakeup) {
+            if (FLAGS_use_io_uring) {
                 ring_listener_->NotifyEventFd();
                 return;
             }
@@ -1247,7 +1240,7 @@ bool TaskGroup::NotifyIfWaiting() {
         // Only one caller gets the right to notify the worker.
         if (_notified.compare_exchange_strong(expect, true)) {
 #ifdef IO_URING_ENABLED
-            if (FLAGS_brpc_use_event_fd_wakeup) {
+            if (FLAGS_use_io_uring) {
                 ring_listener_->NotifyEventFd();
                 return true;
             }
@@ -1286,7 +1279,7 @@ bool TaskGroup::Wait(){
     };
 
 #ifdef IO_URING_ENABLED
-    if (FLAGS_brpc_use_event_fd_wakeup) {
+    if (FLAGS_use_io_uring) {
         // has_work() clears _notified. If a producer races before or after that
         // check, eventfd retains the wakeup until submit_and_wait observes it.
         // A stop may happen immediately before this worker tries to sleep. A

@@ -163,9 +163,8 @@ public:
 
     void ExtWakeup();
 
-    // Wakes a worker blocked in WaitForCqe through the poll request registered
-    // on wakeup_event_fd_. This is only used when
-    // FLAGS_brpc_use_event_fd_wakeup was enabled at startup.
+    // Wakes an io_uring worker blocked in WaitForCqe through the poll request
+    // registered on wakeup_event_fd_.
     void NotifyEventFd();
 
     // Blocks the owning worker until this ring has at least one completion.
