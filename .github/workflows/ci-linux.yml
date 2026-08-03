@@ -95,3 +95,22 @@ jobs:
       run: |
            export CC=gcc && export CXX=g++
            bazel build -j 12 -c opt --define with_mesalink=false --define with_glog=true --define with_thrift=true --copt -DHAVE_ZLIB=1 //...
+
+  gcc-unittest:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v2
+    - uses: ./.github/actions/install-essential-dependences
+    - name: install gtest
+      run: sudo apt-get install -y libgtest-dev
+    - uses: ./.github/actions/init-make-config
+      with:
+        options: --cc=gcc --cxx=g++
+    - name: compile tests
+      run: |
+           cd test
+           make -j ${{env.proc_num}}
+    - name: run tests
+      run: |
+           cd test
+           sh ./run_tests.sh
