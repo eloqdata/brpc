@@ -106,7 +106,9 @@ jobs:
     - uses: actions/checkout@v7
     - uses: ./.github/actions/install-essential-dependences
     - name: install test dependencies
-      run: sudo apt-get install -y gdb libgtest-dev
+      run: |
+           sudo apt-get update
+           sudo apt-get install -y gdb libgtest-dev
     - uses: ./.github/actions/init-make-config
       with:
         options: --cc=gcc --cxx=g++
