@@ -233,7 +233,6 @@ int RingListener::Init() {
             std::make_unique<RingWriteBufferPool>(write_buf_slots, &ring_);
 
     if (write_buf_pool_->buf_pool_.empty()) {
-        Close();
         return -1;
     }
 
@@ -244,17 +243,14 @@ int RingListener::Init() {
             const int saved_errno = errno;
             LOG(ERROR) << "Failed to create the brpc worker wakeup eventfd, errno: "
                        << saved_errno << " (" << strerror(saved_errno) << ")";
-            Close();
             return -saved_errno;
         }
         ret = ArmEventFdPoll();
         if (ret != 0) {
-            Close();
             return ret;
         }
         ret = SubmitAll();
         if (ret < 0) {
-            Close();
             return ret;
         }
     } else {
