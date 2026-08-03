@@ -130,7 +130,7 @@ http_archive(
     sha256 = "5347464af5b14ac54bb945dc68f1dd7c56f0dad7262816b956138fc53bcc0131",
     strip_prefix = "boost_1_77_0",
     urls = [
-        "https://boostorg.jfrog.io/artifactory/main/release/1.77.0/source/boost_1_77_0.tar.gz",
+        "https://archives.boost.io/release/1.77.0/source/boost_1_77_0.tar.gz",
     ],
 )
 
