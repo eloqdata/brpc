@@ -17,7 +17,7 @@
 # Default build options. These are applied first and unconditionally.
 #
 
-build --cxxopt="-std=c++11"
+build --cxxopt="-std=c++17"
 # Use gnu11 for asm keyword.
 build --conlyopt="-std=gnu11"
 
