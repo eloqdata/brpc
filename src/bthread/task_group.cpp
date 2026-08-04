@@ -1217,7 +1217,7 @@ void TaskGroup::Notify() {
         // Only one caller gets the right to notify the worker.
         if (_notified.compare_exchange_strong(expect, true)) {
 #ifdef IO_URING_ENABLED
-            if (FLAGS_use_io_uring) {
+            if (ring_listener_ != nullptr) {
                 ring_listener_->NotifyEventFd();
                 return;
             }
@@ -1235,7 +1235,7 @@ bool TaskGroup::NotifyIfWaiting() {
         // Only one caller gets the right to notify the worker.
         if (_notified.compare_exchange_strong(expect, true)) {
 #ifdef IO_URING_ENABLED
-            if (FLAGS_use_io_uring) {
+            if (ring_listener_ != nullptr) {
                 ring_listener_->NotifyEventFd();
                 return true;
             }
@@ -1274,7 +1274,7 @@ bool TaskGroup::Wait(){
     };
 
 #ifdef IO_URING_ENABLED
-    if (FLAGS_use_io_uring) {
+    if (ring_listener_ != nullptr) {
         // has_work() clears _notified. If a producer races before or after that
         // check, eventfd retains the wakeup until submit_and_wait observes it.
         // A stop may happen immediately before this worker tries to sleep. A
