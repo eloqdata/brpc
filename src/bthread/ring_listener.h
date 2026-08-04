@@ -21,12 +21,9 @@
 
 #ifdef IO_URING_ENABLED
 
-#include <condition_variable>
 #include <butil/logging.h>
-#include <iostream>
 #include <liburing.h>
 #include <mutex>
-#include <thread>
 #include <unordered_map>
 
 #include "brpc/socket.h"
@@ -34,7 +31,6 @@
 #undef BLOCK_SIZE
 #include "bthread/moodycamelqueue.h"
 #include "bthread/ring_write_buf_pool.h"
-#include "butil/threading/platform_thread.h"
 #include "spsc_queue.h"
 
 namespace bthread {
@@ -128,17 +124,7 @@ public:
 
     int Init();
 
-    void Close() {
-        if (ring_init_) {
-            io_uring_queue_exit(&ring_);
-            ring_init_ = false;
-        }
-
-        if (in_buf_) {
-            free(in_buf_);
-            in_buf_ = nullptr;
-        }
-    }
+    void Close();
 
     int Register(SocketRegisterData *data);
 
@@ -167,13 +153,14 @@ public:
 
     int SubmitAll();
 
-    void PollAndNotify();
-
     size_t ExtPoll();
 
-    void ExtWakeup();
+    // Wakes an io_uring worker blocked in Park() through the poll request
+    // registered on wakeup_event_fd_.
+    void NotifyEventFd();
 
-    void Run();
+    // Blocks the owning worker until this ring has at least one completion.
+    int Park();
 
     void RecycleReadBuf(uint16_t bid, size_t bytes);
 
@@ -209,6 +196,7 @@ private:
         NonFixedWriteFinish,
         WaitingNonFixedWrite,
         Fsync,
+        SchedulerWakeup,
         Noop = 255
     };
 
@@ -232,6 +220,8 @@ private:
                 return 7;
             case OpCode::Fsync:
                 return 8;
+            case OpCode::SchedulerWakeup:
+                return 9;
             default:
                 return UINT8_MAX;
         }
@@ -257,6 +247,8 @@ private:
                 return OpCode::WaitingNonFixedWrite;
             case 8:
                 return OpCode::Fsync;
+            case 9:
+                return OpCode::SchedulerWakeup;
             default:
                 return OpCode::Noop;
         }
@@ -270,18 +262,19 @@ private:
 
     void RecycleReturnedWriteBufs();
 
-    enum struct PollStatus : uint8_t { Active = 0, Sleep, ExtPoll, Closed };
+    // Installs the persistent multishot poll used for scheduler wakeups.
+    int ArmEventFdPoll();
+
+    void DrainEventFd();
 
     struct io_uring ring_;
     bool ring_init_{false};
-    std::atomic<PollStatus> poll_status_{PollStatus::Sleep};
-    // cqe_ready_ is set by the ring listener and unset by the worker
+    // cqe_ready_ is set before a parked worker resumes and cleared after the
+    // owning worker drains the completion queue.
     std::atomic<bool> cqe_ready_{false};
     uint16_t submit_cnt_{0};
     std::unordered_map<int, int> reg_fds_;
-    std::mutex mux_;
-    std::condition_variable cv_;
-    std::thread poll_thd_;
+    int wakeup_event_fd_{-1};
 
     io_uring_buf_ring *in_buf_ring_{nullptr};
     char *in_buf_{nullptr};
@@ -295,8 +288,6 @@ private:
     std::vector<std::pair<brpc::Socket *, uint64_t> > waiting_batch_{
         buf_ring_size
     };
-
-    std::atomic<bool> has_external_{true};
 
     std::vector<uint16_t> free_reg_fd_idx_;
 

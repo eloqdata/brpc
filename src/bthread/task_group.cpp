@@ -193,11 +193,6 @@ bool TaskGroup::wait_task(bthread_t* tid) {
         if (FLAGS_worker_polling_time_us <= 0 ||
             butil::cpuwide_time_us() - poll_start_us > FLAGS_worker_polling_time_us) {
             if (!HasTasks()) {
-#ifdef IO_URING_ENABLED
-                if (FLAGS_use_io_uring && ring_listener_ != nullptr) {
-                    ring_listener_->ExtWakeup();
-                }
-#endif
                 NotifyRegisteredModules(WorkerStatus::Sleep);
 
                 Wait();
@@ -1221,6 +1216,12 @@ void TaskGroup::Notify() {
         bool expect = false;
         // Only one caller gets the right to notify the worker.
         if (_notified.compare_exchange_strong(expect, true)) {
+#ifdef IO_URING_ENABLED
+            if (ring_listener_ != nullptr) {
+                ring_listener_->NotifyEventFd();
+                return;
+            }
+#endif
             std::unique_lock<std::mutex> lk(_mux);
             _notified.store(true, std::memory_order_release);
             _cv.notify_one();
@@ -1233,6 +1234,12 @@ bool TaskGroup::NotifyIfWaiting() {
         bool expect = false;
         // Only one caller gets the right to notify the worker.
         if (_notified.compare_exchange_strong(expect, true)) {
+#ifdef IO_URING_ENABLED
+            if (ring_listener_ != nullptr) {
+                ring_listener_->NotifyEventFd();
+                return true;
+            }
+#endif
             std::unique_lock<std::mutex> lk(_mux);
             _notified.store(true, std::memory_order_release);
             _cv.notify_one();
@@ -1246,10 +1253,7 @@ bool TaskGroup::Wait(){
     _waiting.store(true, std::memory_order_release);
     _waiting_workers.fetch_add(1, std::memory_order_relaxed);
 
-    std::unique_lock<std::mutex> lk(_mux);
-    // Before waiting and sleeping, reset the _notified status.
-    _notified.store(false, std::memory_order_release);
-    _cv.wait(lk, [this]()->bool {
+    const auto has_work = [this]()->bool {
         // Clear the _notified status every time the worker wakes up.
         _notified.store(false, std::memory_order_release);
         // No need to check _rq since _rq can only be pushed by itself.
@@ -1267,7 +1271,34 @@ bool TaskGroup::Wait(){
         // Check any module registered or deleted before checking modules' tasks.
         CheckAndUpdateModules();
         return HasTasks();
-    });
+    };
+
+#ifdef IO_URING_ENABLED
+    if (ring_listener_ != nullptr) {
+        // has_work() clears _notified. If a producer races before or after that
+        // check, eventfd retains the wakeup until submit_and_wait observes it.
+        // A stop may happen immediately before this worker tries to sleep. A
+        // worker that is already blocked is woken through eventfd by
+        // TaskControl::stop_and_join().
+        while (true) {
+            const ParkingLot::State pl_state = _pl->get_state();
+#ifndef BTHREAD_DONT_SAVE_PARKING_STATE
+            _last_pl_state = pl_state;
+#endif
+            if (pl_state.stopped() || has_work()) {
+                break;
+            }
+            if (ring_listener_->Park() < 0) {
+                break;
+            }
+        }
+        _notified.store(false, std::memory_order_release);
+    } else
+#endif
+    {
+        std::unique_lock<std::mutex> lk(_mux);
+        _cv.wait(lk, has_work);
+    }
     _waiting.store(false, std::memory_order_release);
     _waiting_workers.fetch_sub(1, std::memory_order_relaxed);
     return true;

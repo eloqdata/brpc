@@ -280,6 +280,13 @@ void TaskControl::stop_and_join() {
     for (int i = 0; i < _parking_lot_num; ++i) {
         _pl[i].stop();
     }
+#ifdef IO_URING_ENABLED
+    // Notify() routes to eventfd when a ring listener exists and otherwise
+    // preserves the condition-variable wakeup path.
+    for (int i = 0; i < _parking_lot_num; ++i) {
+        _groups[i]->Notify();
+    }
+#endif
     // Interrupt blocking operations.
     for (size_t i = 0; i < _workers.size(); ++i) {
         interrupt_pthread(_workers[i]);
