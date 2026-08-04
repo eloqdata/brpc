@@ -34,7 +34,6 @@
 #include "bthread/eloq_module.h"
 #include "bthread/inbound_ring_buf.h"
 #include "bthread/ring_write_buf_pool.h"
-#include "butil/threading/platform_thread.h"
 
 #include "ring_listener.h"
 
@@ -46,7 +45,6 @@ DEFINE_int32(io_uring_registered_files, 1024,
              "inbound listener");
 DEFINE_int32(io_uring_write_buffer_pool_size, 1024,
              "Number of buffers kept in the io_uring-based write buffer pool.");
-DECLARE_bool(use_io_uring);
 
 void RingListener::Close() {
     if (ring_init_) {
@@ -66,24 +64,6 @@ void RingListener::Close() {
 }
 
 RingListener::~RingListener() {
-    if (!FLAGS_use_io_uring) {
-        for (auto [fd, fd_idx]: reg_fds_) {
-            SocketUnRegisterData data;
-            data.fd_ = fd;
-            SubmitCancel(&data);
-            // Not wait here because the worker should have quit already.
-        }
-        SubmitAll();
-
-        poll_status_.store(PollStatus::Closed, std::memory_order_release); {
-            std::unique_lock<std::mutex> lk(mux_);
-            cv_.notify_one();
-        }
-    }
-
-    if (poll_thd_.joinable()) {
-        poll_thd_.join();
-    }
     Close();
 }
 
@@ -235,31 +215,20 @@ int RingListener::Init() {
         return -1;
     }
 
-    poll_status_.store(PollStatus::Sleep, std::memory_order_release);
-    if (FLAGS_use_io_uring) {
-        wakeup_event_fd_ = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-        if (wakeup_event_fd_ < 0) {
-            const int saved_errno = errno;
-            LOG(ERROR) << "Failed to create the brpc worker wakeup eventfd, errno: "
-                       << saved_errno << " (" << strerror(saved_errno) << ")";
-            return -saved_errno;
-        }
-        ret = ArmEventFdPoll();
-        if (ret != 0) {
-            return ret;
-        }
-        ret = SubmitAll();
-        if (ret < 0) {
-            return ret;
-        }
-    } else {
-        poll_thd_ = std::thread([&]() {
-            std::string ring_listener = "ring_listener:";
-            ring_listener.append(std::to_string(task_group_->group_id_));
-            butil::PlatformThread::SetName(ring_listener.c_str());
-
-            Run();
-        });
+    wakeup_event_fd_ = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (wakeup_event_fd_ < 0) {
+        const int saved_errno = errno;
+        LOG(ERROR) << "Failed to create the brpc worker wakeup eventfd, errno: "
+                   << saved_errno << " (" << strerror(saved_errno) << ")";
+        return -saved_errno;
+    }
+    ret = ArmEventFdPoll();
+    if (ret != 0) {
+        return ret;
+    }
+    ret = SubmitAll();
+    if (ret < 0) {
+        return ret;
     }
 
     return 0;
@@ -564,46 +533,12 @@ int RingListener::WaitForCqe() {
     return ret;
 }
 
-void RingListener::PollAndNotify() {
-    io_uring_cqe *cqe = nullptr;
-    while (true) {
-        int ret = io_uring_wait_cqe(&ring_, &cqe);
-        if (ret == -EINTR || ret == -EAGAIN) {
-            continue;
-        }
-        if (ret < 0) {
-            LOG(ERROR) << "Listener uring wait errno: " << ret;
-            poll_status_.store(PollStatus::Sleep, std::memory_order_relaxed);
-            return;
-        }
-        break;
-    }
-
-    cqe_ready_.store(true, std::memory_order_relaxed);
-    poll_status_.store(PollStatus::Sleep, std::memory_order_relaxed);
-    RingModule::NotifyWorker(task_group_->group_id_);
-}
-
-
 size_t RingListener::ExtPoll() {
-    if (!has_external_.load(std::memory_order_relaxed)) {
-        has_external_.store(true, std::memory_order_release);
-    }
-
-    // has_external_ should be updated before poll_status_ is checked.
-    std::atomic_thread_fence(std::memory_order_release);
-
-    PollStatus status = PollStatus::Sleep;
-    if (!poll_status_.compare_exchange_strong(status, PollStatus::ExtPoll)) {
-        return 0;
-    }
-
     HandleBacklog();
 
     io_uring_cqe *cqe = nullptr;
     int ret = io_uring_peek_cqe(&ring_, &cqe);
     if (ret != 0) {
-        poll_status_.store(PollStatus::Sleep, std::memory_order_relaxed);
         return 0;
     }
 
@@ -614,49 +549,12 @@ size_t RingListener::ExtPoll() {
         ++processed;
     }
 
-    cqe_ready_.store(false, std::memory_order_relaxed);
-
     if (processed > 0) {
         io_uring_cq_advance(&ring_, processed);
     }
     cqe_ready_.store(false, std::memory_order_relaxed);
-    poll_status_.store(PollStatus::Sleep, std::memory_order_relaxed);
 
     return processed;
-}
-
-void RingListener::ExtWakeup() {
-    if (FLAGS_use_io_uring) {
-        return;
-    }
-    has_external_.store(false, std::memory_order_relaxed);
-    if (poll_status_.load(std::memory_order_relaxed) != PollStatus::Sleep) {
-        return;
-    }
-    std::unique_lock<std::mutex> lk(mux_);
-    cv_.notify_one();
-}
-
-void RingListener::Run() {
-    while (poll_status_.load(std::memory_order_relaxed) != PollStatus::Closed) {
-        bool success = false;
-        if (!has_external_.load(std::memory_order_relaxed)) {
-            PollStatus status = PollStatus::Sleep;
-            success = poll_status_.compare_exchange_strong(status, PollStatus::Active,
-                                                           std::memory_order_acq_rel);
-            if (success) {
-                PollAndNotify();
-            }
-        }
-        std::unique_lock<std::mutex> lk(mux_);
-        cv_.wait(lk, [this]() {
-            // wait for the worker to process the ready cqes and notify RingListener when it sleeps
-            return !has_external_.load(std::memory_order_relaxed)
-                   && !cqe_ready_.load(std::memory_order_relaxed) ||
-                   poll_status_.load(std::memory_order_relaxed) ==
-                   PollStatus::Closed;
-        });
-    }
 }
 
 void RingListener::RecycleReadBuf(uint16_t bid, size_t bytes) {

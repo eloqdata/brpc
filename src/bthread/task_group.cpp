@@ -193,11 +193,6 @@ bool TaskGroup::wait_task(bthread_t* tid) {
         if (FLAGS_worker_polling_time_us <= 0 ||
             butil::cpuwide_time_us() - poll_start_us > FLAGS_worker_polling_time_us) {
             if (!HasTasks()) {
-#ifdef IO_URING_ENABLED
-                if (FLAGS_use_io_uring && ring_listener_ != nullptr) {
-                    ring_listener_->ExtWakeup();
-                }
-#endif
                 NotifyRegisteredModules(WorkerStatus::Sleep);
 
                 Wait();

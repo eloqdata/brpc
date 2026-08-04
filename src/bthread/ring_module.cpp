@@ -19,14 +19,10 @@
 
 #include "ring_module.h"
 #include "ring_listener.h"
-#include <atomic>
-
 #ifdef IO_URING_ENABLED
-void RingModule::ExtThdStart(int thd_id) {
-    listeners_.at(thd_id)->has_external_.store(true, std::memory_order_relaxed);
-}
+void RingModule::ExtThdStart(int) {}
 
-void RingModule::ExtThdEnd(int thd_id) { listeners_.at(thd_id)->ExtWakeup(); }
+void RingModule::ExtThdEnd(int) {}
 
 void RingModule::Process(int thd_id) {
     RingListener *listener = listeners_.at(thd_id);
