@@ -1285,7 +1285,7 @@ bool TaskGroup::Wait(){
         _last_pl_state = pl_state;
 #endif
         if (!pl_state.stopped() && !has_work()) {
-            ring_listener_->WaitForCqe();
+            ring_listener_->Park();
         }
         _notified.store(false, std::memory_order_release);
     } else

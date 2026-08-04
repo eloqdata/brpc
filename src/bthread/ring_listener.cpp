@@ -513,7 +513,7 @@ void RingListener::NotifyEventFd() {
     }
 }
 
-int RingListener::WaitForCqe() {
+int RingListener::Park() {
     int ret;
     do {
         ret = io_uring_submit_and_wait(&ring_, 1);
