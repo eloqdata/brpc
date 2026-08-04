@@ -530,7 +530,7 @@ int RingListener::Park() {
     if (ret == -EINTR || ret == -EBUSY) {
         return ret;
     }
-    LOG(FATAL) << "Failed while waiting on the brpc worker io_uring, ret: " << ret;
+    LOG(ERROR) << "Failed while waiting on the brpc worker io_uring, ret: " << ret;
     return ret;
 }
 
