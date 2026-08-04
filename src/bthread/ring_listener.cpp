@@ -525,8 +525,9 @@ int RingListener::Park() {
         return 0;
     }
     // TaskControl interrupts worker pthreads during shutdown. Returning on
-    // EINTR lets the scheduler observe the stopped parking-lot state.
-    if (ret == -EINTR) {
+    // EINTR lets the scheduler observe the stopped parking-lot state. EBUSY
+    // means the CQ overflow list must be reaped before entering the ring again.
+    if (ret == -EINTR || ret == -EBUSY) {
         return ret;
     }
     LOG(FATAL) << "Failed while waiting on the brpc worker io_uring, ret: " << ret;
