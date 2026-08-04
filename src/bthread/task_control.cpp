@@ -281,13 +281,10 @@ void TaskControl::stop_and_join() {
         _pl[i].stop();
     }
 #ifdef IO_URING_ENABLED
-    if (FLAGS_use_io_uring) {
-        // Workers in this mode wait in io_uring rather than on the parking
-        // lot. Reuse the scheduler's normal eventfd notification so shutdown
-        // does not depend on a signal interrupting io_uring_enter.
-        for (int i = 0; i < _parking_lot_num; ++i) {
-            _groups[i]->Notify();
-        }
+    // Notify() routes to eventfd when a ring listener exists and otherwise
+    // preserves the condition-variable wakeup path.
+    for (int i = 0; i < _parking_lot_num; ++i) {
+        _groups[i]->Notify();
     }
 #endif
     // Interrupt blocking operations.
