@@ -739,11 +739,16 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
                            << cqe->res;
             }
             DrainEventFd();
-            // A multishot poll stays armed after each readiness event. Losing
-            // IORING_CQE_F_MORE means the scheduler can no longer wake this
-            // worker, so fail instead of allowing a future permanent sleep.
+            // A multishot poll stays armed only while the CQE carries MORE.
+            // Re-arm a terminated request so a later scheduler notification
+            // cannot leave this worker permanently asleep.
             if (!(cqe->flags & IORING_CQE_F_MORE)) {
-                LOG(FATAL) << "The brpc worker multishot wakeup poll terminated";
+                const int ret = ArmEventFdPoll();
+                if (ret != 0) {
+                    LOG(ERROR) << "Failed to re-arm the brpc worker wakeup "
+                                  "poll, ret: "
+                               << ret;
+                }
             }
             break;
         }
