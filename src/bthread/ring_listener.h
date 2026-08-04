@@ -160,8 +160,6 @@ public:
     void NotifyEventFd();
 
     // Blocks the owning worker until this ring has at least one completion.
-    // DEFER_TASKRUN requires every io_uring_enter call to come from the ring's
-    // single issuer, so the legacy polling thread must never call this method.
     int Park();
 
     void RecycleReadBuf(uint16_t bid, size_t bytes);

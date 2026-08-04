@@ -479,9 +479,9 @@ void RingListener::DrainEventFd() {
         if (nread < 0 && errno == EINTR) {
             continue;
         }
-        // EAGAIN means another notification consumer already drained the
-        // counter. There is only one consumer today, but treating it as
-        // drained keeps this helper safe if that implementation changes.
+        // Multiple multishot CQEs may already be queued for the same readable
+        // eventfd. An earlier CQE can drain the coalesced counter, leaving a
+        // later one with nothing to read.
         if (nread < 0 && errno == EAGAIN) {
             return;
         }
