@@ -81,11 +81,12 @@ DEFINE_int32(module_process_latency_log_threshold_us, 0,
              "Log module process latency longer than this threshold (0 disables logging)");
 DEFINE_string(module_visit_order, "",
               "Comma-separated module names giving the visit order of one "
-              "ProcessModulesTask pass, e.g. \"ring,eloqstore,txservice,"
-              "eloqstore\". Known names are ring, txservice and eloqstore. A "
-              "name may repeat, which drives that module more than once per "
-              "pass; naming a module that is not registered is harmless. Empty "
-              "keeps the default: every module once, in module-type order.");
+              "ProcessModulesTask pass. Known names are ring, txservice and "
+              "eloqstore. A name may repeat, which drives that module more "
+              "than once per pass; naming a module that is not registered is "
+              "harmless, it is skipped. Empty selects the default order "
+              "\"ring,eloqstore,txservice,eloqstore\"; pass "
+              "\"ring,txservice,eloqstore\" for one visit each.");
 
 BAIDU_VOLATILE_THREAD_LOCAL(TaskGroup*, tls_task_group, NULL);
 // Sync with TaskMeta::local_storage when a bthread is created or destroyed.
@@ -322,8 +323,25 @@ static size_t ResolveModuleVisitOrder(
         pos = comma + 1;
     }
     if (cnt == 0) {
-        for (size_t i = 0; i < eloq::kModuleTypeCount; ++i) {
-            (*order)[cnt++] = static_cast<uint8_t>(i);
+        // Default: drive EloqStore twice per pass, once before and once after
+        // the tx service. A shard accumulates completed IO faster than a single
+        // visit per pass can drain, so the second visit shortens the interval
+        // between an IO completing and the shard draining it. Benchmarking
+        // shows this ahead of one-visit-each on read-heavy load and no worse on
+        // a mixed one. A module that is not registered -- EloqStore under a
+        // different storage backend, Ring without io_uring -- is skipped by the
+        // visit loop, so naming it here costs a null check.
+        static constexpr eloq::ModuleType kDefaultVisitOrder[] = {
+            eloq::ModuleType::kRing,
+            eloq::ModuleType::kEloqStore,
+            eloq::ModuleType::kTxService,
+            eloq::ModuleType::kEloqStore,
+        };
+        static_assert(sizeof(kDefaultVisitOrder) /
+                              sizeof(kDefaultVisitOrder[0]) <=
+                      TaskGroup::kMaxModuleVisits);
+        for (eloq::ModuleType type : kDefaultVisitOrder) {
+            (*order)[cnt++] = static_cast<uint8_t>(type);
         }
     }
     return cnt;
