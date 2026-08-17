@@ -227,9 +227,18 @@ public:
     std::function<bool(bool)> override_shard_heap_{nullptr};
     std::function<bool()> has_tx_processor_work_{nullptr};
 
-    std::array<eloq::EloqModule *, 10> registered_modules_{};
+    std::array<eloq::EloqModule *, eloq::kModuleTypeCount> registered_modules_{};
     int modules_cnt_{0};
     uint64_t modules_version_{0};
+
+    // Registry slots to visit in one ProcessModulesTask() pass, resolved from
+    // --module_visit_order once in init(). Held inline and pre-resolved
+    // because ProcessModulesTask() runs millions of times a second: reading it
+    // must cost no more than the plain array walk it replaced. A slot may
+    // repeat, so the order can be longer than the number of modules.
+    static constexpr size_t kMaxModuleVisits = 8;
+    std::array<uint8_t, kMaxModuleVisits> module_visit_order_{};
+    size_t module_visit_cnt_{0};
 
 #ifdef IO_URING_ENABLED
     int RegisterSocket(SocketRegisterData *data);
@@ -305,7 +314,9 @@ public:
 
     bool HasTasks();
 
-    void CheckAndUpdateModules();
+    // start_new_modules: call ExtThdStart() on modules new to this worker.
+    // Only safe when the worker is running, not when it is going to sleep.
+    void CheckAndUpdateModules(bool start_new_modules);
 
     enum struct WorkerStatus
     {

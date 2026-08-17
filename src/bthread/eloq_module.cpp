@@ -26,24 +26,60 @@ extern "C" {
 bthread::TaskControl *bthread_get_task_control();
 }
 
-extern std::array<eloq::EloqModule *, 10> registered_modules;
+extern std::array<eloq::EloqModule *, eloq::kModuleTypeCount> registered_modules;
 extern std::atomic<int> registered_module_cnt;
 extern std::atomic<uint64_t> registered_module_version;
 
 namespace eloq {
+    namespace {
+        struct ModuleTypeNameEntry {
+            ModuleType type_;
+            const char *name_;
+        };
+        constexpr ModuleTypeNameEntry kModuleTypeNames[] = {
+            {ModuleType::kRing, "ring"},
+            {ModuleType::kTxService, "txservice"},
+            {ModuleType::kEloqStore, "eloqstore"},
+        };
+        static_assert(sizeof(kModuleTypeNames) / sizeof(kModuleTypeNames[0]) ==
+                      kModuleTypeCount);
+    }  // namespace
+
+    const char *ModuleTypeName(ModuleType type) {
+        for (const auto &entry : kModuleTypeNames) {
+            if (entry.type_ == type) {
+                return entry.name_;
+            }
+        }
+        return "unknown";
+    }
+
+    bool ParseModuleTypeName(const std::string &name, ModuleType *type) {
+        for (const auto &entry : kModuleTypeNames) {
+            if (name == entry.name_) {
+                *type = entry.type_;
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool EloqModule::NotifyWorker(int thd_id) {
         return bthread_notify_worker(thd_id);
     }
 
     int register_module(EloqModule *module) {
+        // The module's type is its slot, so the registry never shifts and a
+        // slot always denotes the same kind of module.
+        const size_t slot = static_cast<size_t>(module->Type());
+        CHECK_LT(slot, registered_modules.size());
         std::unique_lock lk(module_mutex);
-        size_t i = 0;
-        while (i < registered_modules.size() && registered_modules[i] != nullptr) {
-            // Each module should only be registered once.
-            CHECK(registered_modules[i] != module);
-            i++;
-        }
-        registered_modules[i] = module;
+        // A module type is a singleton; registering a second instance while
+        // the first is live would silently displace it.
+        CHECK(registered_modules[slot] == nullptr)
+                << "module type " << ModuleTypeName(module->Type())
+                << " is already registered";
+        registered_modules[slot] = module;
         registered_module_cnt.fetch_add(1, std::memory_order_release);
         registered_module_version.fetch_add(1, std::memory_order_release);
         const auto non_null_modules =
@@ -76,19 +112,15 @@ namespace eloq {
             bthread_usleep(1000);
         }
         std::unique_lock lk(module_mutex);
-        size_t i = 0;
-        while (i < registered_modules.size() && registered_modules[i] != module) {
-            i++;
-        }
-        if (i == registered_modules.size()) {
+        const size_t slot = static_cast<size_t>(module->Type());
+        if (slot >= registered_modules.size() ||
+            registered_modules[slot] != module) {
             return 0;
         }
-        CHECK(i < registered_module_cnt);
-        while (i < registered_modules.size() - 1) {
-            registered_modules[i] = registered_modules[i + 1];
-            i++;
-        }
-        registered_modules[registered_modules.size() - 1] = nullptr;
+        // Clear the slot in place. Compacting the array would renumber every
+        // higher module, so a slot would stop denoting the same module across
+        // an unregister -- which is what --module_visit_order addresses.
+        registered_modules[slot] = nullptr;
         registered_module_cnt.fetch_sub(1, std::memory_order_release);
         registered_module_version.fetch_add(1, std::memory_order_release);
         const auto non_null_modules =

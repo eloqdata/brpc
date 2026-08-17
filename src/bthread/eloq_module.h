@@ -21,13 +21,50 @@
 #define ELOQ_MODULE_H
 
 #include <atomic>
+#include <cstddef>
 #include <shared_mutex>
+#include <string>
 
 namespace eloq {
     inline std::shared_mutex module_mutex;
+
+    /**
+     * Identifies what a module is, independently of when it registers. The
+     * enumerator is also the module's slot in the registry, so a module always
+     * occupies the same slot: the mapping survives a module being absent (e.g.
+     * RingModule when io_uring is off) and a module restarting (e.g. EloqStore
+     * reopening, which happens during normal startup).
+     *
+     * The order is the order the modules settle into after startup, so visiting
+     * every registered slot once in ascending order is the order workers have
+     * always used.
+     */
+    enum class ModuleType : size_t {
+        kRing = 0,
+        kTxService = 1,
+        kEloqStore = 2,
+    };
+
+    inline constexpr size_t kModuleTypeCount = 3;
+
+    /** @brief Stable name of a module type, e.g. "eloqstore". */
+    const char *ModuleTypeName(ModuleType type);
+
+    /**
+     * @brief Maps a module type name back to its enumerator.
+     * @return true if the name is known, in which case *type is set.
+     */
+    bool ParseModuleTypeName(const std::string &name, ModuleType *type);
+
     class EloqModule {
     public:
         virtual ~EloqModule() = default;
+
+        /**
+         * What this module is. Determines the module's slot in the registry
+         * and the name --module_visit_order uses to refer to it.
+         */
+        virtual ModuleType Type() const = 0;
 
         /**
          * This func is called when worker starts running.
