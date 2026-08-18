@@ -47,7 +47,7 @@
 #include "bthread/ring_listener.h"
 #endif
 
-std::array<eloq::EloqModule *, eloq::kModuleTypeCount> registered_modules;
+std::array<eloq::EloqModule *, eloq::kRegistrySlotCount> registered_modules;
 std::atomic<int> registered_module_cnt;
 std::atomic<uint64_t> registered_module_version;
 
@@ -81,12 +81,14 @@ DEFINE_int32(module_process_latency_log_threshold_us, 0,
              "Log module process latency longer than this threshold (0 disables logging)");
 DEFINE_string(module_visit_order, "",
               "Comma-separated module names giving the visit order of one "
-              "ProcessModulesTask pass. Known names are ring, txservice and "
-              "eloqstore. A name may repeat, which drives that module more "
-              "than once per pass; naming a module that is not registered is "
-              "harmless, it is skipped. Empty selects the default order "
-              "\"ring,eloqstore,txservice,eloqstore\"; pass "
-              "\"ring,txservice,eloqstore\" for one visit each.");
+              "ProcessModulesTask pass. Known names are ring, txservice, "
+              "eloqstore and runtime, where runtime stands for every "
+              "registered API-layer runtime (mongo, mariadb, ...). A name may "
+              "repeat, which drives that module more than once per pass; "
+              "naming a module that is not registered is harmless, it is "
+              "skipped. Empty selects the default order "
+              "\"ring,eloqstore,txservice,eloqstore,runtime\"; pass "
+              "\"ring,txservice,eloqstore,runtime\" for one visit each.");
 
 BAIDU_VOLATILE_THREAD_LOCAL(TaskGroup*, tls_task_group, NULL);
 // Sync with TaskMeta::local_storage when a bthread is created or destroyed.
@@ -316,10 +318,18 @@ static size_t ResolveModuleVisitOrder(
         CHECK(eloq::ParseModuleTypeName(name, &type))
                 << "unknown module name \"" << name << "\" in "
                 << "--module_visit_order=" << spec;
-        CHECK_LT(cnt, order->size())
-                << "--module_visit_order has more than " << order->size()
-                << " entries: " << spec;
-        (*order)[cnt++] = static_cast<uint8_t>(type);
+        // "runtime" stands for every runtime slot: which runtime lives where
+        // is a registration-time detail no deployment should have to know.
+        const size_t slot_begin = static_cast<size_t>(type);
+        const size_t slot_end = type == eloq::ModuleType::kRuntime
+                                        ? eloq::kRegistrySlotCount
+                                        : slot_begin + 1;
+        for (size_t slot = slot_begin; slot < slot_end; ++slot) {
+            CHECK_LT(cnt, order->size())
+                    << "--module_visit_order has more than " << order->size()
+                    << " slot visits: " << spec;
+            (*order)[cnt++] = static_cast<uint8_t>(slot);
+        }
         pos = comma + 1;
     }
     if (cnt == 0) {
@@ -328,20 +338,28 @@ static size_t ResolveModuleVisitOrder(
         // visit per pass can drain, so the second visit shortens the interval
         // between an IO completing and the shard draining it. Benchmarking
         // shows this ahead of one-visit-each on read-heavy load and no worse on
-        // a mixed one. A module that is not registered -- EloqStore under a
-        // different storage backend, Ring without io_uring -- is skipped by the
-        // visit loop, so naming it here costs a null check.
-        static constexpr eloq::ModuleType kDefaultVisitOrder[] = {
-            eloq::ModuleType::kRing,
-            eloq::ModuleType::kEloqStore,
-            eloq::ModuleType::kTxService,
-            eloq::ModuleType::kEloqStore,
+        // a mixed one. The runtime slots come last, matching the registration
+        // order the fixed rotation used to settle into. A slot whose module is
+        // not registered -- EloqStore under a different storage backend, Ring
+        // without io_uring, the runtime range in a process with fewer (or no)
+        // runtimes -- is skipped by the visit loop, so naming it costs a null
+        // check.
+        static constexpr uint8_t kDefaultVisitOrder[] = {
+            static_cast<uint8_t>(eloq::ModuleType::kRing),
+            static_cast<uint8_t>(eloq::ModuleType::kEloqStore),
+            static_cast<uint8_t>(eloq::ModuleType::kTxService),
+            static_cast<uint8_t>(eloq::ModuleType::kEloqStore),
         };
-        static_assert(sizeof(kDefaultVisitOrder) /
-                              sizeof(kDefaultVisitOrder[0]) <=
+        static_assert(sizeof(kDefaultVisitOrder) +
+                              eloq::kMaxRuntimeModules <=
                       TaskGroup::kMaxModuleVisits);
-        for (eloq::ModuleType type : kDefaultVisitOrder) {
-            (*order)[cnt++] = static_cast<uint8_t>(type);
+        for (uint8_t slot : kDefaultVisitOrder) {
+            (*order)[cnt++] = slot;
+        }
+        for (size_t slot = eloq::kRuntimeSlotBegin;
+             slot < eloq::kRegistrySlotCount;
+             ++slot) {
+            (*order)[cnt++] = static_cast<uint8_t>(slot);
         }
     }
     return cnt;

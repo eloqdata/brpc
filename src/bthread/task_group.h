@@ -227,7 +227,8 @@ public:
     std::function<bool(bool)> override_shard_heap_{nullptr};
     std::function<bool()> has_tx_processor_work_{nullptr};
 
-    std::array<eloq::EloqModule *, eloq::kModuleTypeCount> registered_modules_{};
+    std::array<eloq::EloqModule *, eloq::kRegistrySlotCount>
+        registered_modules_{};
     int modules_cnt_{0};
     uint64_t modules_version_{0};
 
@@ -236,7 +237,7 @@ public:
     // because ProcessModulesTask() runs millions of times a second: reading it
     // must cost no more than the plain array walk it replaced. A slot may
     // repeat, so the order can be longer than the number of modules.
-    static constexpr size_t kMaxModuleVisits = 8;
+    static constexpr size_t kMaxModuleVisits = 16;
     std::array<uint8_t, kMaxModuleVisits> module_visit_order_{};
     size_t module_visit_cnt_{0};
 

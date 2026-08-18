@@ -26,7 +26,7 @@ extern "C" {
 bthread::TaskControl *bthread_get_task_control();
 }
 
-extern std::array<eloq::EloqModule *, eloq::kModuleTypeCount> registered_modules;
+extern std::array<eloq::EloqModule *, eloq::kRegistrySlotCount> registered_modules;
 extern std::atomic<int> registered_module_cnt;
 extern std::atomic<uint64_t> registered_module_version;
 
@@ -40,6 +40,7 @@ namespace eloq {
             {ModuleType::kRing, "ring"},
             {ModuleType::kTxService, "txservice"},
             {ModuleType::kEloqStore, "eloqstore"},
+            {ModuleType::kRuntime, "runtime"},
         };
         static_assert(sizeof(kModuleTypeNames) / sizeof(kModuleTypeNames[0]) ==
                       kModuleTypeCount);
@@ -69,16 +70,36 @@ namespace eloq {
     }
 
     int register_module(EloqModule *module) {
-        // The module's type is its slot, so the registry never shifts and a
-        // slot always denotes the same kind of module.
-        const size_t slot = static_cast<size_t>(module->Type());
-        CHECK_LT(slot, registered_modules.size());
+        // An infrastructure module's type is its slot, so the registry never
+        // shifts and a slot always denotes the same kind of module. Runtime
+        // modules share the [kRuntimeSlotBegin, kRegistrySlotCount) range --
+        // several may coexist in a converged binary -- and take the first free
+        // slot in it; slots are cleared in place on unregister, so a runtime's
+        // slot is likewise stable for as long as it stays registered.
+        const ModuleType type = module->Type();
         std::unique_lock lk(module_mutex);
-        // A module type is a singleton; registering a second instance while
-        // the first is live would silently displace it.
-        CHECK(registered_modules[slot] == nullptr)
-                << "module type " << ModuleTypeName(module->Type())
-                << " is already registered";
+        size_t slot;
+        if (type == ModuleType::kRuntime) {
+            slot = kRuntimeSlotBegin;
+            while (slot < kRegistrySlotCount &&
+                   registered_modules[slot] != nullptr) {
+                CHECK(registered_modules[slot] != module)
+                        << "runtime module is already registered";
+                ++slot;
+            }
+            CHECK_LT(slot, kRegistrySlotCount)
+                    << "more than " << kMaxRuntimeModules
+                    << " runtime modules registered";
+        } else {
+            slot = static_cast<size_t>(type);
+            CHECK_LT(slot, kRuntimeSlotBegin);
+            // An infrastructure module type is a singleton; registering a
+            // second instance while the first is live would silently
+            // displace it.
+            CHECK(registered_modules[slot] == nullptr)
+                    << "module type " << ModuleTypeName(type)
+                    << " is already registered";
+        }
         registered_modules[slot] = module;
         registered_module_cnt.fetch_add(1, std::memory_order_release);
         registered_module_version.fetch_add(1, std::memory_order_release);
@@ -112,15 +133,19 @@ namespace eloq {
             bthread_usleep(1000);
         }
         std::unique_lock lk(module_mutex);
-        const size_t slot = static_cast<size_t>(module->Type());
-        if (slot >= registered_modules.size() ||
-            registered_modules[slot] != module) {
+        // Locate by pointer: a runtime module may sit anywhere in the runtime
+        // range, and an infrastructure slot may have been re-registered by a
+        // newer instance since the existence check above.
+        const auto it = std::find(registered_modules.begin(),
+                                  registered_modules.end(),
+                                  module);
+        if (it == registered_modules.end()) {
             return 0;
         }
         // Clear the slot in place. Compacting the array would renumber every
         // higher module, so a slot would stop denoting the same module across
         // an unregister -- which is what --module_visit_order addresses.
-        registered_modules[slot] = nullptr;
+        *it = nullptr;
         registered_module_cnt.fetch_sub(1, std::memory_order_release);
         registered_module_version.fetch_add(1, std::memory_order_release);
         const auto non_null_modules =
