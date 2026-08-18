@@ -686,6 +686,19 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
             uint16_t fd_idx = unregister_data->fd_idx_;
             // If the fd is a registered file, recycles the fixed file slot.
             if (fd_idx < UINT16_MAX) {
+                // Clear the slot first: the fixed-file table holds a kernel
+                // reference to the socket, so close(2) alone does not
+                // release it. Without this, a closed connection stays open
+                // (no FIN is sent) until the slot happens to be reused by a
+                // later registration.
+                static int minus_one = -1;
+                const int rc = io_uring_register_files_update(
+                    &ring_, fd_idx, &minus_one, 1);
+                if (rc < 0) {
+                    LOG(ERROR) << "Failed to clear fixed file slot " << fd_idx
+                               << ", ret: " << rc
+                               << ", group: " << task_group_->group_id_;
+                }
                 free_reg_fd_idx_.emplace_back(fd_idx);
             }
             unregister_data->Notify(cqe->res);
