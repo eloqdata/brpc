@@ -78,13 +78,19 @@ namespace eloq {
         // slot is likewise stable for as long as it stays registered.
         const ModuleType type = module->Type();
         std::unique_lock lk(module_mutex);
+        // Search the whole registry, not just up to the first free slot: a
+        // duplicate can sit after a hole left by another module's unregister,
+        // and registering it again would put the same module in two slots --
+        // visited twice per pass, and unregistered from only one of them.
+        CHECK(std::find(registered_modules.begin(),
+                        registered_modules.end(),
+                        module) == registered_modules.end())
+                << "module is already registered";
         size_t slot;
         if (type == ModuleType::kRuntime) {
             slot = kRuntimeSlotBegin;
             while (slot < kRegistrySlotCount &&
                    registered_modules[slot] != nullptr) {
-                CHECK(registered_modules[slot] != module)
-                        << "runtime module is already registered";
                 ++slot;
             }
             CHECK_LT(slot, kRegistrySlotCount)
