@@ -439,6 +439,10 @@ void InputMessenger::OnNewMessagesFromRing(Socket *m) {
                     m->ClearInboundBuf();
                     return;
                 }
+                // Retryable (e.g. TLS collected ciphertext but produced no
+                // plaintext yet); move on to the next inbound buffer instead
+                // of feeding a negative size to ProcessNewMessage.
+                continue;
             }
         }
 
@@ -547,6 +551,8 @@ int InputMessenger::Create(const butil::EndPoint& remote_side,
     SocketOptions options;
     options.remote_side = remote_side;
     options.user = this;
+    // io_uring is a server-side feature: only accepted connections are
+    // registered on the ring. Outbound (client) sockets always use epoll.
     options.on_edge_triggered_events = OnNewMessages;
     options.health_check_interval_s = health_check_interval_s;
     if (FLAGS_socket_keepalive) {

@@ -21,6 +21,7 @@
 
 #include <iostream>                            // std::ostream
 #include <deque>                               // std::deque
+#include <memory>                              // std::unique_ptr
 #include <set>                                 // std::set
 #include "butil/atomicops.h"                    // butil::atomic
 #include "bthread/types.h"                      // bthread_id_t
@@ -48,6 +49,8 @@ struct InboundRingBuf;
 namespace bthread {
 class TaskGroup;
 }
+
+typedef struct bio_st BIO;
 
 namespace brpc {
 namespace policy {
@@ -642,6 +645,26 @@ public:
     int CopyDataRead();
     void ClearInboundBuf();
     bool RecycleInBackgroundIfNecessary();
+
+    // TLS-over-io_uring (memory BIO) helpers. All of them require
+    // `_tls_ring_mutex' to be held unless noted otherwise.
+    // Lazily allocates `_tls_ring_ctx'.
+    int InitTlsRingContext(int fd);
+    // Releases `_tls_ring_ctx' and the TLS detection buffer. The memory BIOs
+    // themselves are owned (and freed) by the SSL session.
+    void DestroyTlsRingContext();
+    // Replaces the SSL session's BIOs with memory BIOs so that all TLS I/O
+    // goes through io_uring buffers.
+    int AddMemoryBIO(int fd);
+    // Pushes ciphertext read from io_uring into the SSL read BIO.
+    int FeedTlsCiphertext(const void* data, size_t len);
+    // Moves encrypted bytes from the SSL write BIO to `pending_cipher_out'.
+    int DrainTlsCiphertext();
+    // Writes `pending_cipher_out' to the fd through io_uring. Blocks the
+    // calling bthread until all pending ciphertext has been accepted.
+    int FlushTlsCiphertext();
+    // Pulls decrypted plaintext out of the SSL session into `_read_buf'.
+    ssize_t ConsumeTlsPlaintext();
 #endif
 private:
     DISALLOW_COPY_AND_ASSIGN(Socket);
@@ -678,6 +701,25 @@ friend void DereferenceSocket(Socket*);
     // `req' using the corresponding method. Returns written bytes on
     // success, -1 otherwise and errno is set
     ssize_t DoWrite(WriteRequest* req);
+
+#ifdef IO_URING_ENABLED
+    // TLS-over-io_uring internals (see the public helpers above).
+    // Encrypts `data_list' into the memory BIO and flushes the resulting
+    // ciphertext through io_uring. Returns consumed plaintext bytes on
+    // success, -1 otherwise (errno and *ssl_error are set).
+    ssize_t DoWriteTlsRing(WriteRequest* req, butil::IOBuf* data_list[],
+                           size_t ndata, int* ssl_error);
+    // Creates the server-side SSL session and binds memory BIOs to it.
+    int EnsureTlsSessionForRing();
+    // Drives SSL_do_handshake() until it completes or needs more ciphertext.
+    int ContinueTlsHandshake();
+    // Feeds ciphertext, continues the handshake if needed, then decrypts
+    // application data into `_read_buf'.
+    ssize_t ProcessTlsRingData(const char* data, size_t len);
+    // Entry point of the ring read path for sockets that may use TLS.
+    // Takes `_tls_ring_mutex' internally.
+    ssize_t HandleTlsRingRead(const char* data, size_t len);
+#endif
 
     // Called before returning to pool.
     void OnRecycle();
@@ -1004,6 +1046,29 @@ private:
     // of the socket.
     int reg_fd_{-1};
     uint16_t recv_num_{0};
+
+    // TLS-over-io_uring state (used only when both -use_io_uring and
+    // -enable_ssl_io_uring are on).
+    struct TlsRingContext {
+        // Observers only: both BIOs are owned by the SSL session after
+        // SSL_set_bio() and are freed together with it.
+        BIO* mem_rbio{nullptr};
+        BIO* mem_wbio{nullptr};
+        // Ciphertext drained from `mem_wbio', waiting to be written to the
+        // fd through io_uring.
+        butil::IOBuf pending_cipher_out;
+    };
+
+    // Bytes accumulated before we can tell whether the connection uses TLS.
+    butil::IOBuf _tls_detect_buf;
+    std::unique_ptr<TlsRingContext> _tls_ring_ctx;
+    // Guards `_ssl_session', `_tls_ring_ctx' and `iovecs_' on the ring TLS
+    // path. This must be a bthread mutex (NOT `_ssl_session_mutex', which is
+    // a pthread mutex): FlushTlsCiphertext() suspends the calling bthread
+    // until the io_uring write completes, and holding a pthread mutex across
+    // that suspension blocks whole workers (deadlocking the ring loop) and
+    // may unlock the mutex from a different pthread than the locker.
+    mutable bthread::Mutex _tls_ring_mutex;
 
 #ifdef IO_URING_ENABLED
     friend class ::RingListener;
