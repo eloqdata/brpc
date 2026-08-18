@@ -21,6 +21,8 @@
 
 #include <sys/types.h>
 #include <stddef.h>                         // size_t
+#include <stdint.h>                         // uint8_t
+#include <string>
 #include <typeinfo>
 #include <gflags/gflags.h>
 #include "butil/compat.h"                   // OS_MACOSX
@@ -45,7 +47,7 @@
 #include "bthread/ring_listener.h"
 #endif
 
-std::array<eloq::EloqModule *, 10> registered_modules;
+std::array<eloq::EloqModule *, eloq::kRegistrySlotCount> registered_modules;
 std::atomic<int> registered_module_cnt;
 std::atomic<uint64_t> registered_module_version;
 
@@ -77,6 +79,16 @@ DEFINE_int32(worker_polling_time_us, 0, "Worker keep busy polling some time befo
                                        "sleeping on parking lot");
 DEFINE_int32(module_process_latency_log_threshold_us, 0,
              "Log module process latency longer than this threshold (0 disables logging)");
+DEFINE_string(module_visit_order, "",
+              "Comma-separated module names giving the visit order of one "
+              "ProcessModulesTask pass. Known names are ring, txservice, "
+              "eloqstore and runtime, where runtime stands for every "
+              "registered API-layer runtime (mongo, mariadb, ...). A name may "
+              "repeat, which drives that module more than once per pass; "
+              "naming a module that is not registered is harmless, it is "
+              "skipped. Empty selects the default order "
+              "\"ring,eloqstore,txservice,eloqstore,runtime\"; pass "
+              "\"ring,txservice,eloqstore,runtime\" for one visit each.");
 
 BAIDU_VOLATILE_THREAD_LOCAL(TaskGroup*, tls_task_group, NULL);
 // Sync with TaskMeta::local_storage when a bthread is created or destroyed.
@@ -286,7 +298,75 @@ TaskGroup::~TaskGroup() {
     }
 }
 
+// Resolves FLAGS_module_visit_order into registry slots, returning how many
+// were written. An unparsable entry aborts rather than silently visiting the
+// wrong module: the flag exists to control which module runs when, so a typo
+// must not look like it worked. An empty flag yields every slot once in
+// module-type order, which is the order workers use when the flag is unset.
+static size_t ResolveModuleVisitOrder(
+        std::array<uint8_t, TaskGroup::kMaxModuleVisits> *order) {
+    const std::string &spec = FLAGS_module_visit_order;
+    size_t cnt = 0;
+    size_t pos = 0;
+    while (pos < spec.size()) {
+        size_t comma = spec.find(',', pos);
+        if (comma == std::string::npos) {
+            comma = spec.size();
+        }
+        const std::string name = spec.substr(pos, comma - pos);
+        eloq::ModuleType type;
+        CHECK(eloq::ParseModuleTypeName(name, &type))
+                << "unknown module name \"" << name << "\" in "
+                << "--module_visit_order=" << spec;
+        // "runtime" stands for every runtime slot: which runtime lives where
+        // is a registration-time detail no deployment should have to know.
+        const size_t slot_begin = static_cast<size_t>(type);
+        const size_t slot_end = type == eloq::ModuleType::kRuntime
+                                        ? eloq::kRegistrySlotCount
+                                        : slot_begin + 1;
+        for (size_t slot = slot_begin; slot < slot_end; ++slot) {
+            CHECK_LT(cnt, order->size())
+                    << "--module_visit_order has more than " << order->size()
+                    << " slot visits: " << spec;
+            (*order)[cnt++] = static_cast<uint8_t>(slot);
+        }
+        pos = comma + 1;
+    }
+    if (cnt == 0) {
+        // Default: drive EloqStore twice per pass, once before and once after
+        // the tx service. A shard accumulates completed IO faster than a single
+        // visit per pass can drain, so the second visit shortens the interval
+        // between an IO completing and the shard draining it. Benchmarking
+        // shows this ahead of one-visit-each on read-heavy load and no worse on
+        // a mixed one. The runtime slots come last, matching the registration
+        // order the fixed rotation used to settle into. A slot whose module is
+        // not registered -- EloqStore under a different storage backend, Ring
+        // without io_uring, the runtime range in a process with fewer (or no)
+        // runtimes -- is skipped by the visit loop, so naming it costs a null
+        // check.
+        static constexpr uint8_t kDefaultVisitOrder[] = {
+            static_cast<uint8_t>(eloq::ModuleType::kRing),
+            static_cast<uint8_t>(eloq::ModuleType::kEloqStore),
+            static_cast<uint8_t>(eloq::ModuleType::kTxService),
+            static_cast<uint8_t>(eloq::ModuleType::kEloqStore),
+        };
+        static_assert(sizeof(kDefaultVisitOrder) +
+                              eloq::kMaxRuntimeModules <=
+                      TaskGroup::kMaxModuleVisits);
+        for (uint8_t slot : kDefaultVisitOrder) {
+            (*order)[cnt++] = slot;
+        }
+        for (size_t slot = eloq::kRuntimeSlotBegin;
+             slot < eloq::kRegistrySlotCount;
+             ++slot) {
+            (*order)[cnt++] = static_cast<uint8_t>(slot);
+        }
+    }
+    return cnt;
+}
+
 int TaskGroup::init(size_t runqueue_capacity) {
+    module_visit_cnt_ = ResolveModuleVisitOrder(&module_visit_order_);
     if (_rq.init(runqueue_capacity) != 0) {
         LOG(FATAL) << "Fail to init _rq";
         return -1;
@@ -1269,7 +1349,10 @@ bool TaskGroup::Wait(){
         }
 
         // Check any module registered or deleted before checking modules' tasks.
-        CheckAndUpdateModules();
+        // This worker is going to sleep, so it must not start anything: the
+        // ExtThdStart() for whatever registers now comes from
+        // NotifyRegisteredModules(Working) when it wakes.
+        CheckAndUpdateModules(false);
         return HasTasks();
     };
 
@@ -1305,18 +1388,17 @@ bool TaskGroup::Wait(){
 }
 
 void TaskGroup::ProcessModulesTask() {
-    int old_modules_cnt = modules_cnt_;
-
-    CheckAndUpdateModules();
-
-    int new_modules_cnt = modules_cnt_;
-    for (int i = old_modules_cnt; i < new_modules_cnt; ++i) {
-        eloq::EloqModule *module = registered_modules_[i];
-        module->ExtThdStart(group_id_);
-    }
+    // Starts modules that are new to this worker. Slots are keyed by module
+    // type and can therefore be sparse, so a module cannot be located by
+    // counting: CheckAndUpdateModules() already diffs the module set and is
+    // the only place that knows which entries are new. This worker is
+    // running, so a module registering now missed the ExtThdStart() that
+    // NotifyRegisteredModules() issues on wake-up and must be started here.
+    CheckAndUpdateModules(true);
 
     const int32_t log_threshold_us = FLAGS_module_process_latency_log_threshold_us;
-    for (auto *module : registered_modules_) {
+    for (size_t i = 0; i < module_visit_cnt_; ++i) {
+        eloq::EloqModule *module = registered_modules_[module_visit_order_[i]];
         if (module == nullptr) {
             continue;
         }
@@ -1347,7 +1429,7 @@ bool TaskGroup::HasTasks() {
     return has_task;
 }
 
-void TaskGroup::CheckAndUpdateModules() {
+void TaskGroup::CheckAndUpdateModules(bool start_new_modules) {
     const uint64_t global_version =
         registered_module_version.load(std::memory_order_acquire);
     if (modules_version_ != global_version) {
@@ -1374,6 +1456,12 @@ void TaskGroup::CheckAndUpdateModules() {
             if (!found) {
                 new_m->registered_workers_.fetch_add(
                     1, std::memory_order_relaxed);
+                // Modules bind per-worker state here (EloqStoreModule binds
+                // the thread's shard), so a module that is never started on a
+                // worker cannot run on it at all.
+                if (start_new_modules) {
+                    new_m->ExtThdStart(group_id_);
+                }
             }
         }
 

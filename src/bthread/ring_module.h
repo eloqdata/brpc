@@ -28,6 +28,10 @@ class RingListener;
 
 class RingModule : public eloq::EloqModule {
 public:
+    eloq::ModuleType Type() const override {
+        return eloq::ModuleType::kRing;
+    }
+
     void ExtThdStart(int thd_id) override;
 
     void ExtThdEnd(int thd_id) override;

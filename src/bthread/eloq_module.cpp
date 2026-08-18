@@ -26,24 +26,87 @@ extern "C" {
 bthread::TaskControl *bthread_get_task_control();
 }
 
-extern std::array<eloq::EloqModule *, 10> registered_modules;
+extern std::array<eloq::EloqModule *, eloq::kRegistrySlotCount> registered_modules;
 extern std::atomic<int> registered_module_cnt;
 extern std::atomic<uint64_t> registered_module_version;
 
 namespace eloq {
+    namespace {
+        struct ModuleTypeNameEntry {
+            ModuleType type_;
+            const char *name_;
+        };
+        constexpr ModuleTypeNameEntry kModuleTypeNames[] = {
+            {ModuleType::kRing, "ring"},
+            {ModuleType::kTxService, "txservice"},
+            {ModuleType::kEloqStore, "eloqstore"},
+            {ModuleType::kRuntime, "runtime"},
+        };
+        static_assert(sizeof(kModuleTypeNames) / sizeof(kModuleTypeNames[0]) ==
+                      kModuleTypeCount);
+    }  // namespace
+
+    const char *ModuleTypeName(ModuleType type) {
+        for (const auto &entry : kModuleTypeNames) {
+            if (entry.type_ == type) {
+                return entry.name_;
+            }
+        }
+        return "unknown";
+    }
+
+    bool ParseModuleTypeName(const std::string &name, ModuleType *type) {
+        for (const auto &entry : kModuleTypeNames) {
+            if (name == entry.name_) {
+                *type = entry.type_;
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool EloqModule::NotifyWorker(int thd_id) {
         return bthread_notify_worker(thd_id);
     }
 
     int register_module(EloqModule *module) {
+        // An infrastructure module's type is its slot, so the registry never
+        // shifts and a slot always denotes the same kind of module. Runtime
+        // modules share the [kRuntimeSlotBegin, kRegistrySlotCount) range --
+        // several may coexist in a converged binary -- and take the first free
+        // slot in it; slots are cleared in place on unregister, so a runtime's
+        // slot is likewise stable for as long as it stays registered.
+        const ModuleType type = module->Type();
         std::unique_lock lk(module_mutex);
-        size_t i = 0;
-        while (i < registered_modules.size() && registered_modules[i] != nullptr) {
-            // Each module should only be registered once.
-            CHECK(registered_modules[i] != module);
-            i++;
+        // Search the whole registry, not just up to the first free slot: a
+        // duplicate can sit after a hole left by another module's unregister,
+        // and registering it again would put the same module in two slots --
+        // visited twice per pass, and unregistered from only one of them.
+        CHECK(std::find(registered_modules.begin(),
+                        registered_modules.end(),
+                        module) == registered_modules.end())
+                << "module is already registered";
+        size_t slot;
+        if (type == ModuleType::kRuntime) {
+            slot = kRuntimeSlotBegin;
+            while (slot < kRegistrySlotCount &&
+                   registered_modules[slot] != nullptr) {
+                ++slot;
+            }
+            CHECK_LT(slot, kRegistrySlotCount)
+                    << "more than " << kMaxRuntimeModules
+                    << " runtime modules registered";
+        } else {
+            slot = static_cast<size_t>(type);
+            CHECK_LT(slot, kRuntimeSlotBegin);
+            // An infrastructure module type is a singleton; registering a
+            // second instance while the first is live would silently
+            // displace it.
+            CHECK(registered_modules[slot] == nullptr)
+                    << "module type " << ModuleTypeName(type)
+                    << " is already registered";
         }
-        registered_modules[i] = module;
+        registered_modules[slot] = module;
         registered_module_cnt.fetch_add(1, std::memory_order_release);
         registered_module_version.fetch_add(1, std::memory_order_release);
         const auto non_null_modules =
@@ -76,19 +139,19 @@ namespace eloq {
             bthread_usleep(1000);
         }
         std::unique_lock lk(module_mutex);
-        size_t i = 0;
-        while (i < registered_modules.size() && registered_modules[i] != module) {
-            i++;
-        }
-        if (i == registered_modules.size()) {
+        // Locate by pointer: a runtime module may sit anywhere in the runtime
+        // range, and an infrastructure slot may have been re-registered by a
+        // newer instance since the existence check above.
+        const auto it = std::find(registered_modules.begin(),
+                                  registered_modules.end(),
+                                  module);
+        if (it == registered_modules.end()) {
             return 0;
         }
-        CHECK(i < registered_module_cnt);
-        while (i < registered_modules.size() - 1) {
-            registered_modules[i] = registered_modules[i + 1];
-            i++;
-        }
-        registered_modules[registered_modules.size() - 1] = nullptr;
+        // Clear the slot in place. Compacting the array would renumber every
+        // higher module, so a slot would stop denoting the same module across
+        // an unregister -- which is what --module_visit_order addresses.
+        *it = nullptr;
         registered_module_cnt.fetch_sub(1, std::memory_order_release);
         registered_module_version.fetch_add(1, std::memory_order_release);
         const auto non_null_modules =
