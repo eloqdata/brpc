@@ -658,10 +658,12 @@ public:
     int AddMemoryBIO(int fd);
     // Pushes ciphertext read from io_uring into the SSL read BIO.
     int FeedTlsCiphertext(const void* data, size_t len);
-    // Moves encrypted bytes from the SSL write BIO to `pending_cipher_out'.
-    int DrainTlsCiphertext();
-    // Writes `pending_cipher_out' to the fd through io_uring. Blocks the
-    // calling bthread until all pending ciphertext has been accepted.
+    // Writes the ciphertext accumulated in the SSL write BIO to the fd
+    // through io_uring, zero-copy: the write submits iovecs pointing
+    // straight into the BIO's buffer, which cannot move because
+    // `_tls_ring_mutex' serializes all SSL access. Blocks the calling
+    // bthread until all pending ciphertext has been accepted, then empties
+    // the BIO.
     int FlushTlsCiphertext();
     // Pulls decrypted plaintext out of the SSL session into `_read_buf'.
     ssize_t ConsumeTlsPlaintext();
@@ -1051,12 +1053,11 @@ private:
     // -enable_ssl_io_uring are on).
     struct TlsRingContext {
         // Observers only: both BIOs are owned by the SSL session after
-        // SSL_set_bio() and are freed together with it.
+        // SSL_set_bio() and are freed together with it. Ciphertext produced
+        // by SSL_write stays inside `mem_wbio' until FlushTlsCiphertext()
+        // writes it out directly from the BIO's buffer.
         BIO* mem_rbio{nullptr};
         BIO* mem_wbio{nullptr};
-        // Ciphertext drained from `mem_wbio', waiting to be written to the
-        // fd through io_uring.
-        butil::IOBuf pending_cipher_out;
     };
 
     // Bytes accumulated before we can tell whether the connection uses TLS.

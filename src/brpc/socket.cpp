@@ -695,46 +695,35 @@ int Socket::FeedTlsCiphertext(const void* data, size_t len) {
     return static_cast<int>(len);
 }
 
-int Socket::DrainTlsCiphertext() {
+int Socket::FlushTlsCiphertext() {
     if (!_tls_ring_ctx || !_tls_ring_ctx->mem_wbio) {
         return 0;
     }
-    char buf[4 * 1024];
-    int total = 0;
-    while (BIO_pending(_tls_ring_ctx->mem_wbio) > 0) {
-        const int rc = BIO_read(_tls_ring_ctx->mem_wbio, buf, sizeof(buf));
-        if (rc <= 0) {
-            break;
-        }
-        _tls_ring_ctx->pending_cipher_out.append(buf, rc);
-        total += rc;
-    }
-    return total;
-}
-
-int Socket::FlushTlsCiphertext() {
-    if (!_tls_ring_ctx) {
+    // Zero-copy: write straight out of the memory BIO's buffer. The buffer
+    // cannot move or grow while the write is in flight because
+    // _tls_ring_mutex (held by the caller) serializes all SSL access on
+    // this socket, and the BIO is only ever consumed here — never BIO_read.
+    BUF_MEM* bm = NULL;
+    BIO_get_mem_ptr(_tls_ring_ctx->mem_wbio, &bm);
+    if (bm == NULL || bm->length == 0) {
         return 0;
     }
-    ssize_t total = 0;
-    while (!_tls_ring_ctx->pending_cipher_out.empty()) {
-        iovecs_.clear();
-        // cut_into_iovecs only fills the iovecs; bytes are consumed from
-        // pending_cipher_out below, after the write completed.
-        _tls_ring_ctx->pending_cipher_out.cut_into_iovecs(&iovecs_);
-        if (iovecs_.empty()) {
-            break;
-        }
+    size_t done = 0;
+    while (done < bm->length) {
         bthread::TaskGroup* g = bthread::TaskGroup::VolatileTLSTaskGroup();
         if (g == nullptr) {
             // TLS ring I/O must run in bthread context; the ring write below
             // parks the calling bthread until the CQE arrives.
             LOG(ERROR) << "FlushTlsCiphertext called outside bthread worker,"
                        << " socket=" << *this;
-            iovecs_.clear();
             errno = EINVAL;
             return -1;
         }
+        iovecs_.clear();
+        iovec iov;
+        iov.iov_base = bm->data + done;
+        iov.iov_len = bm->length - done;
+        iovecs_.push_back(iov);
         const int rc = g->SocketWaitingNonFixedWrite(this);
         iovecs_.clear();
         if (rc < 0) {
@@ -746,10 +735,11 @@ int Socket::FlushTlsCiphertext() {
             errno = EIO;
             return -1;
         }
-        total += rc;
-        _tls_ring_ctx->pending_cipher_out.pop_front(rc);
+        done += rc;
     }
-    return total > INT_MAX ? INT_MAX : static_cast<int>(total);
+    // All pending ciphertext has been accepted by the kernel; empty the BIO.
+    (void)BIO_reset(_tls_ring_ctx->mem_wbio);
+    return done > INT_MAX ? INT_MAX : static_cast<int>(done);
 }
 
 ssize_t Socket::ConsumeTlsPlaintext() {
@@ -794,9 +784,7 @@ ssize_t Socket::ConsumeTlsPlaintext() {
         break;
     }
     // Reads may generate output (e.g. TLS1.3 KeyUpdate responses); send it.
-    DrainTlsCiphertext();
-    if (!_tls_ring_ctx->pending_cipher_out.empty()
-        && FlushTlsCiphertext() < 0 && !failed) {
+    if (FlushTlsCiphertext() < 0 && !failed) {
         failed = true;
         saved_errno = errno;
     }
@@ -840,9 +828,7 @@ int Socket::ContinueTlsHandshake() {
         if (rc == 1) {
             _ssl_state = SSL_CONNECTED;
             // Flush the final handshake flight (and TLS1.3 session tickets).
-            DrainTlsCiphertext();
-            if (!_tls_ring_ctx->pending_cipher_out.empty()
-                && FlushTlsCiphertext() < 0) {
+            if (FlushTlsCiphertext() < 0) {
                 LOG(WARNING) << "Fail to flush TLS handshake data of socket="
                              << *this << ": " << berror(errno);
                 return -1;
@@ -851,16 +837,13 @@ int Socket::ContinueTlsHandshake() {
         }
         const int ssl_err = SSL_get_error(_ssl_session, rc);
         if (ssl_err == SSL_ERROR_WANT_READ) {
-            DrainTlsCiphertext();
-            if (!_tls_ring_ctx->pending_cipher_out.empty()
-                && FlushTlsCiphertext() < 0) {
+            if (FlushTlsCiphertext() < 0) {
                 LOG(WARNING) << "Fail to flush TLS handshake data of socket="
                              << *this << ": " << berror(errno);
                 return -1;
             }
             break;
         } else if (ssl_err == SSL_ERROR_WANT_WRITE) {
-            DrainTlsCiphertext();
             if (FlushTlsCiphertext() < 0) {
                 LOG(WARNING) << "Fail to flush TLS handshake data of socket="
                              << *this << ": " << berror(errno);
@@ -2735,7 +2718,6 @@ ssize_t Socket::DoWriteTlsRing(WriteRequest* /*req*/, butil::IOBuf* data_list[],
             if (*ssl_error == SSL_ERROR_WANT_WRITE) {
                 // The memory BIO rejected the write (should not happen since
                 // it grows on demand). Flush buffered ciphertext and retry.
-                DrainTlsCiphertext();
                 if (FlushTlsCiphertext() < 0) {
                     *ssl_error = SSL_ERROR_SYSCALL;
                     return -1;
@@ -2762,10 +2744,9 @@ ssize_t Socket::DoWriteTlsRing(WriteRequest* /*req*/, butil::IOBuf* data_list[],
             }
             return -1;
         }
-        // Bound ciphertext buffering: move what this IOBuf produced out of
-        // the memory BIO before encrypting the next one.
-        DrainTlsCiphertext();
     }
+    // The whole batch's ciphertext is in the memory BIO; write it out in
+    // one pass, directly from the BIO's buffer.
     if (FlushTlsCiphertext() < 0) {
         // The plaintext was consumed but its ciphertext cannot be delivered;
         // the connection is broken (errno set by FlushTlsCiphertext).
