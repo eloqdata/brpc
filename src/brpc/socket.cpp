@@ -750,23 +750,30 @@ ssize_t Socket::ConsumeTlsPlaintext() {
     bool failed = false;
     int saved_errno = 0;
     while (true) {
-        char buf[16 * 1024];
-        ERR_clear_error();
+        int ssl_err = SSL_ERROR_NONE;
         errno = 0;
-        const int rc = SSL_read(_ssl_session, buf, sizeof(buf));
-        if (rc > 0) {
-            _read_buf.append(buf, rc);
-            total += rc;
-            continue;
+        // Decrypt straight into _read_buf's blocks (same as the epoll SSL
+        // read path) instead of bouncing through an intermediate buffer.
+        const ssize_t nr = _read_buf.append_from_SSL_channel(
+            _ssl_session, &ssl_err, 64 * 1024);
+        if (nr > 0) {
+            total += nr;
+            if (ssl_err == SSL_ERROR_NONE) {
+                // Stopped at max_count; more plaintext may be buffered.
+                continue;
+            }
+            // WANT_READ: everything available was decrypted. ZERO_RETURN:
+            // data followed by close_notify — deliver the data; the
+            // shutdown surfaces on the next read event or the TCP EOF.
+            break;
         }
-        const int ssl_err = SSL_get_error(_ssl_session, rc);
         if (ssl_err == SSL_ERROR_WANT_READ) {
             // All complete records were decrypted; more ciphertext needed.
             break;
         }
         if (ssl_err == SSL_ERROR_ZERO_RETURN) {
-            // Peer sent close_notify. Stop decrypting; the following TCP
-            // EOF tears the connection down through the regular path.
+            // Peer sent close_notify. Stop decrypting; HandleTlsRingRead
+            // and the transport-EOF check turn this into an EOF.
             break;
         }
         if (ssl_err == SSL_ERROR_SYSCALL && errno == 0
