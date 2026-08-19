@@ -933,11 +933,18 @@ ssize_t Socket::HandleTlsRingRead(const char* data, size_t len) {
                 return -1;
             }
             _ssl_state = SSL_CONNECTING;
-            std::string cached;
-            cached.resize(_tls_detect_buf.size());
-            _tls_detect_buf.copy_to(cached.data(), cached.size());
+            // Feed the buffered detection bytes into the SSL read BIO block
+            // by block (an IOBuf is not necessarily contiguous), then drive
+            // the handshake with no extra input.
+            for (size_t i = 0; i < _tls_detect_buf.backing_block_num(); ++i) {
+                const butil::StringPiece blk = _tls_detect_buf.backing_block(i);
+                if (FeedTlsCiphertext(blk.data(), blk.size()) < 0) {
+                    errno = ESSL;
+                    return -1;
+                }
+            }
             _tls_detect_buf.clear();
-            const ssize_t plain = ProcessTlsRingData(cached.data(), cached.size());
+            const ssize_t plain = ProcessTlsRingData(NULL, 0);
             if (plain == 0) {
                 // Handshake in progress, no plaintext yet.
                 errno = EAGAIN;
