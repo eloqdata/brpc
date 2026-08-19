@@ -19,6 +19,8 @@ cmake_minimum_required(VERSION 2.8.10)
 project(echo_c++ C CXX)
 
 option(LINK_SO "Whether examples are linked dynamically" OFF)
+option(WITH_GLOG "Link glog; must match how brpc was built (WITH_GLOG)" OFF)
+option(IO_URING_ENABLED "Link liburing and define IO_URING_ENABLED; must match how brpc was built" OFF)
 
 execute_process(
     COMMAND bash -c "find ${PROJECT_SOURCE_DIR}/../.. -type d -regex \".*output/include$\" | head -n1 | xargs dirname | tr -d '\n'"
@@ -118,15 +120,28 @@ set(DYNAMIC_LIB
     dl
     )
 
-find_path(GLOG_INCLUDE_PATH NAMES glog/logging.h)
-find_library(GLOG_LIB NAMES glog VERSION ">=0.6.0" REQUIRED)
-
-if((NOT GLOG_INCLUDE_PATH) OR(NOT GLOG_LIB))
-    message(FATAL_ERROR "Fail to find glog")
+if(WITH_GLOG)
+    find_path(GLOG_INCLUDE_PATH NAMES glog/logging.h)
+    find_library(GLOG_LIB NAMES glog)
+    if((NOT GLOG_INCLUDE_PATH) OR (NOT GLOG_LIB))
+        message(FATAL_ERROR "Fail to find glog")
+    endif()
+    include_directories(${GLOG_INCLUDE_PATH})
+    set(DYNAMIC_LIB ${DYNAMIC_LIB} ${GLOG_LIB})
 endif()
 
-include_directories(${GLOG_INCLUDE_PATH})
-set(DYNAMIC_LIB ${DYNAMIC_LIB} ${GLOG_LIB})
+if(IO_URING_ENABLED)
+    find_library(URING_LIB NAMES uring)
+    if(NOT URING_LIB)
+        message(FATAL_ERROR "Fail to find liburing")
+    endif()
+    # The define must match the brpc build: brpc/socket.h contains
+    # IO_URING_ENABLED-conditional members (e.g. Socket::WriteOptions), so
+    # compiling the example without it against an io_uring-enabled library
+    # would mismatch the ABI.
+    add_definitions(-DIO_URING_ENABLED)
+    set(DYNAMIC_LIB ${DYNAMIC_LIB} ${URING_LIB})
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     set(DYNAMIC_LIB ${DYNAMIC_LIB}
