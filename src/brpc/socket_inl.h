@@ -262,15 +262,15 @@ inline bool Socket::IsAvailable() const {
 static const uint32_t EOF_FLAG = (1 << 31);
 
 inline void Socket::PostponeEOF() {
-    if (CreatedByConnect()) { // not needed at server-side
-        _ninprocess.fetch_add(1, butil::memory_order_relaxed);
-    }
+    // Counted on both client- and server-side sockets: a read-EOF (TCP FIN
+    // or TLS close_notify) must not fail the socket while cut messages are
+    // still being processed, so that responses to already-received requests
+    // are delivered before the connection is closed (half-close semantics).
+    _ninprocess.fetch_add(1, butil::memory_order_relaxed);
 }
 
 inline void Socket::CheckEOF() {
-    if (CreatedByConnect()) { // not needed at server-side
-        CheckEOFInternal();
-    }
+    CheckEOFInternal();
 }
 
 inline void Socket::CheckEOFInternal() {

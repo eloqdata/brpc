@@ -749,6 +749,14 @@ HttpResponseSender::~HttpResponseSender() {
     }
     ConcurrencyRemover concurrency_remover(_method_status, cntl, _received_us);
     Socket* socket = accessor.get_sending_socket();
+    // Balances the PostponeEOF() taken in ProcessHttpRequest when this
+    // sender was created. Fires on every exit path, after the response has
+    // been queued (or deliberately abandoned); a postponed EOF then fails
+    // the socket only once the response is on its way.
+    struct CheckEOFGuard {
+        Socket* s;
+        ~CheckEOFGuard() { if (s) { s->CheckEOF(); } }
+    } check_eof_guard = {socket};
     const google::protobuf::Message* res = _res.get();
     
     if (cntl->IsCloseConnection()) {
@@ -1260,6 +1268,13 @@ void EndRunningCallMethodInPool(
 void ProcessHttpRequest(InputMessageBase *msg) {
     const int64_t start_parse_us = butil::cpuwide_time_us();
     DestroyingPtr<HttpContext> imsg_guard(static_cast<HttpContext*>(msg));
+    // Take a PostponeEOF() for the lifetime of resp_sender (checked in its
+    // destructor) BEFORE ReleaseSocket() ends the message's own postpone:
+    // with a read-EOF received together with this request — a TCP FIN or a
+    // TLS close_notify bundled with the request bytes — the in-process
+    // count must never touch zero until the response has been queued
+    // (half-close semantics).
+    msg->socket()->PostponeEOF();
     SocketUniquePtr socket_guard(imsg_guard->ReleaseSocket());
     Socket* socket = socket_guard.get();
     const Server* server = static_cast<const Server*>(msg->arg());
@@ -1268,6 +1283,7 @@ void ProcessHttpRequest(InputMessageBase *msg) {
     Controller* cntl = new (std::nothrow) Controller;
     if (NULL == cntl) {
         LOG(FATAL) << "Fail to new Controller";
+        socket->CheckEOF();  // balance the PostponeEOF taken above
         return;
     }
     HttpResponseSender resp_sender(cntl);
