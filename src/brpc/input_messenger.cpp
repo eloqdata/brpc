@@ -30,6 +30,14 @@
 #include "brpc/rdma/rdma_endpoint.h"
 #include "brpc/input_messenger.h"
 #include "brpc/socket.h"
+#ifdef IO_URING_ENABLED
+#include "bthread/task_group.h"
+#include "bthread/task_meta.h"
+
+namespace bthread {
+extern BAIDU_THREAD_LOCAL TaskGroup* tls_task_group;
+}
+#endif
 
 
 namespace brpc {
@@ -416,7 +424,17 @@ void InputMessenger::OnNewMessagesFromRing(Socket *m) {
     // OK in most cases.
     InputMessageClosure last_msg;
     bool read_eof = false;
+    // The ring operations below (recv rearm and buffer recycling in
+    // CopyDataRead/ClearInboundBuf) and any park inside the TLS read path
+    // must run on the socket's bound group. Message processing may rebind
+    // and then unbind this task (e.g. redis command execution follows the
+    // CcShard's group), so re-assert the binding before every round: a
+    // bound task always resumes on its bound group after a park.
+    const auto rebind_to_bound_group = [m]() {
+        bthread::tls_task_group->current_task()->SetBoundGroup(m->bound_g_);
+    };
     while (!read_eof && m->buf_idx_ < m->in_bufs_.size()) {
+        rebind_to_bound_group();
         const int64_t received_us = butil::cpuwide_time_us();
         const int64_t base_realtime = butil::gettimeofday_us() - received_us;
 
@@ -453,6 +471,7 @@ void InputMessenger::OnNewMessagesFromRing(Socket *m) {
         }
     }
 
+    rebind_to_bound_group();
     if (read_eof) {
         m->SetEOF();
     }
