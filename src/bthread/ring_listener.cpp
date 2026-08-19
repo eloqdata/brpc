@@ -555,6 +555,10 @@ size_t RingListener::ExtPoll() {
     }
     cqe_ready_.store(false, std::memory_order_relaxed);
 
+    if (!pending_clear_fd_idx_.empty()) {
+        // Handles slots queued by CancelRecv completions above.
+        ClearPendingFileSlots();
+    }
     return processed;
 }
 
@@ -684,22 +688,13 @@ void RingListener::HandleCqe(io_uring_cqe *cqe) {
                         << ", sock: " << unregister_data->fd_;
             }
             uint16_t fd_idx = unregister_data->fd_idx_;
-            // If the fd is a registered file, recycles the fixed file slot.
             if (fd_idx < UINT16_MAX) {
-                // Clear the slot first: the fixed-file table holds a kernel
-                // reference to the socket, so close(2) alone does not
-                // release it. Without this, a closed connection stays open
-                // (no FIN is sent) until the slot happens to be reused by a
-                // later registration.
-                static int minus_one = -1;
-                const int rc = io_uring_register_files_update(
-                    &ring_, fd_idx, &minus_one, 1);
-                if (rc < 0) {
-                    LOG(ERROR) << "Failed to clear fixed file slot " << fd_idx
-                               << ", ret: " << rc
-                               << ", group: " << task_group_->group_id_;
-                }
-                free_reg_fd_idx_.emplace_back(fd_idx);
+                // The fixed-file table holds a kernel reference to the
+                // socket, so close(2) alone does not release it (no FIN is
+                // sent until the slot is cleared or reused). Queue the slot
+                // for ClearPendingFileSlots(), which runs at the end of this
+                // ExtPoll() round and recycles the slot once cleared.
+                pending_clear_fd_idx_.push_back(fd_idx);
             }
             unregister_data->Notify(cqe->res);
             break;
@@ -812,6 +807,28 @@ void RingListener::HandleRecv(brpc::SocketUniquePtr sock, io_uring_cqe *cqe) {
 
     InboundRingBuf in_buf{sock.get(), nw, buf_id, need_rearm};
     brpc::Socket::SocketResume(std::move(sock), in_buf, task_group_);
+}
+
+void RingListener::ClearPendingFileSlots() {
+    static int minus_one = -1;
+    size_t kept = 0;
+    for (size_t i = 0; i < pending_clear_fd_idx_.size(); ++i) {
+        const uint16_t fd_idx = pending_clear_fd_idx_[i];
+        const int rc =
+            io_uring_register_files_update(&ring_, fd_idx, &minus_one, 1);
+        if (rc < 0) {
+            // Rare (e.g. EINTR or transient kernel memory pressure): keep
+            // the slot pending and retry on the next poll round rather than
+            // recycling a slot that still pins the old socket.
+            LOG_EVERY_SECOND(ERROR)
+                << "Failed to clear fixed file slot " << fd_idx << ", ret: "
+                << rc << ", group: " << task_group_->group_id_ << "; will retry";
+            pending_clear_fd_idx_[kept++] = fd_idx;
+        } else {
+            free_reg_fd_idx_.emplace_back(fd_idx);
+        }
+    }
+    pending_clear_fd_idx_.resize(kept);
 }
 
 void RingListener::HandleBacklog() {
