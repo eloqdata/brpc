@@ -772,7 +772,7 @@ ssize_t Socket::ConsumeTlsPlaintext() {
             break;
         }
         if (ssl_err == SSL_ERROR_ZERO_RETURN) {
-            // Peer sent close_notify. Stop decrypting; HandleTlsRingRead
+            // Peer sent close_notify. Stop decrypting; DoRingRead
             // and the transport-EOF check turn this into an EOF.
             break;
         }
@@ -904,20 +904,49 @@ static SSLState DetectSSLStateInBuffer(const char* header, size_t len) {
     return SSL_OFF;
 }
 
-ssize_t Socket::HandleTlsRingRead(const char* data, size_t len) {
+// Ring-mode counterpart of DoRead(): based upon whether the connection is
+// using SSL (if SSLState is SSL_UNKNOWN, try to detect at first), consume
+// `len' inbound bytes into `_read_buf'. Returns appended plaintext bytes on
+// success, 0 on EOF (TLS close_notify), -1 otherwise and errno is set
+// (EAGAIN when the bytes were consumed but produced no plaintext yet, e.g.
+// mid-handshake or a partial TLS record).
+ssize_t Socket::DoRingRead(const char* data, size_t len) {
+    // Plain connection: same as DoRead's non-SSL branch.
+    if (ssl_state() == SSL_OFF) {
+        if (_force_ssl) {
+            errno = ESSL;
+            return -1;
+        }
+        _read_buf.append(data, len);
+        return len;
+    }
+
     BAIDU_SCOPED_LOCK(_tls_ring_mutex);
     if (_ssl_state == SSL_UNKNOWN) {
-        // Accumulate bytes until we can determine whether this connection
-        // uses TLS. Detection needs at least 6 bytes.
+        // Mirrors DoRead's DetectSSLState() step; the ring is push-based,
+        // so bytes are accumulated until detection has the 6 it needs
+        // instead of MSG_PEEKing the fd.
         _tls_detect_buf.append(data, len);
         if (_tls_detect_buf.length() < 6) {
             errno = EAGAIN;
-            return -EAGAIN;
+            return -1;
         }
         char header[6];
         _tls_detect_buf.copy_to(header, sizeof(header));
-        const SSLState s = DetectSSLStateInBuffer(header, sizeof(header));
-        if (s == SSL_CONNECTING) {
+        switch (DetectSSLStateInBuffer(header, sizeof(header))) {
+        case SSL_OFF: {
+            _ssl_state = SSL_OFF;
+            if (_force_ssl) {
+                errno = ESSL;
+                return -1;
+            }
+            const ssize_t nr = _tls_detect_buf.length();
+            // Zero-copy block handoff of the buffered first bytes.
+            _read_buf.append(_tls_detect_buf);
+            _tls_detect_buf.clear();
+            return nr;
+        }
+        case SSL_CONNECTING:
             if (!FLAGS_enable_ssl_io_uring) {
                 // TLS on the ring read path requires memory-BIO support.
                 // Reject the handshake outright instead of feeding
@@ -934,8 +963,8 @@ ssize_t Socket::HandleTlsRingRead(const char* data, size_t len) {
             }
             _ssl_state = SSL_CONNECTING;
             // Feed the buffered detection bytes into the SSL read BIO block
-            // by block (an IOBuf is not necessarily contiguous), then drive
-            // the handshake with no extra input.
+            // by block (an IOBuf is not necessarily contiguous); the
+            // handshake is then driven below with no extra input.
             for (size_t i = 0; i < _tls_detect_buf.backing_block_num(); ++i) {
                 const butil::StringPiece blk = _tls_detect_buf.backing_block(i);
                 if (FeedTlsCiphertext(blk.data(), blk.size()) < 0) {
@@ -944,41 +973,31 @@ ssize_t Socket::HandleTlsRingRead(const char* data, size_t len) {
                 }
             }
             _tls_detect_buf.clear();
-            const ssize_t plain = ProcessTlsRingData(NULL, 0);
-            if (plain == 0) {
-                // Handshake in progress, no plaintext yet.
-                errno = EAGAIN;
-                return -EAGAIN;
-            }
-            return plain;
+            data = NULL;
+            len = 0;
+            break;
+        default:
+            CHECK(false) << "Impossible to reach here";
+            break;
         }
-        _ssl_state = SSL_OFF;
-        if (_force_ssl) {
-            errno = ESSL;
-            return -1;
-        }
-        const ssize_t plain = _tls_detect_buf.length();
-        _read_buf.append(_tls_detect_buf);
-        _tls_detect_buf.clear();
+    }
+
+    // SSL_CONNECTING or SSL_CONNECTED.
+    const ssize_t plain = ProcessTlsRingData(data, len);
+    if (plain > 0) {
         return plain;
     }
-    if (_ssl_state == SSL_CONNECTING || _ssl_state == SSL_CONNECTED) {
-        const ssize_t plain = ProcessTlsRingData(data, len);
-        if (plain == 0) {
-            if (_ssl_state == SSL_CONNECTED && _ssl_session != NULL &&
-                (SSL_get_shutdown(_ssl_session) & SSL_RECEIVED_SHUTDOWN)) {
-                // Peer sent close_notify: report EOF now rather than
-                // waiting for a TCP FIN that may never arrive.
-                return 0;
-            }
-            errno = EAGAIN;
-            return -EAGAIN;
-        }
-        return plain;
+    if (plain < 0) {
+        return -1;  // errno set by ProcessTlsRingData
     }
-    // SSL_OFF: plain data.
-    _read_buf.append(data, len);
-    return len;
+    if (_ssl_state == SSL_CONNECTED && _ssl_session != NULL &&
+        (SSL_get_shutdown(_ssl_session) & SSL_RECEIVED_SHUTDOWN)) {
+        // Peer sent close_notify: report EOF now rather than waiting for
+        // a TCP FIN that may never arrive.
+        return 0;
+    }
+    errno = EAGAIN;
+    return -1;
 }
 #endif  // IO_URING_ENABLED
 
@@ -2810,7 +2829,7 @@ int Socket::SSLHandshake(int fd, bool server_mode) {
         int rc = SSL_do_handshake(_ssl_session);
         if (rc == 1) {
             // Note: this path is never taken by ring-mode server sockets
-            // (their handshake is driven by HandleTlsRingRead); sockets
+            // (their handshake is driven by DoRingRead); sockets
             // handshaking here (clients, epoll servers) stay on fd BIOs.
             _ssl_state = SSL_CONNECTED;
             AddBIOBuffer(_ssl_session, fd, FLAGS_ssl_bio_buffer_size);
@@ -3874,10 +3893,10 @@ void Socket::NotifyWaitingNonFixedWrite(int nw) {
 int Socket::CopyDataRead() {
     bthread::TaskGroup *cur_group = bound_g_;
     CHECK(static_cast<uint64_t>(buf_idx_) < in_bufs_.size());
-    // MUST copy by value: HandleTlsRingRead() below can park this bthread
-    // waiting for an io_uring write completion, during which the ring
-    // listener appends to in_bufs_ and may reallocate it — a reference taken
-    // here would dangle and yield garbage for the recycle/rearm below.
+    // MUST copy by value: DoRingRead() below can park this bthread waiting
+    // for an io_uring write completion, during which the ring listener
+    // appends to in_bufs_ and may reallocate it — a reference taken here
+    // would dangle and yield garbage for the recycle/rearm below.
     const SocketInboundBuf rbuf(in_bufs_[buf_idx_].bytes_,
                                 in_bufs_[buf_idx_].buf_id_,
                                 in_bufs_[buf_idx_].need_rearm_);
@@ -3886,14 +3905,8 @@ int Socket::CopyDataRead() {
     int nw = rbuf.bytes_;
     if (rbuf.bytes_ > 0) {
         const char *buf_head = cur_group->GetRingReadBuf(rbuf.buf_id_);
-        if (_ssl_state != SSL_OFF) {
-            // SSL_UNKNOWN (detection pending), SSL_CONNECTING or
-            // SSL_CONNECTED. Rejects TLS if -enable_ssl_io_uring is off.
-            const ssize_t plain = HandleTlsRingRead(buf_head, rbuf.bytes_);
-            nw = plain < 0 ? -errno : static_cast<int>(plain);
-        } else {
-            _read_buf.append(buf_head, rbuf.bytes_);
-        }
+        const ssize_t nr = DoRingRead(buf_head, rbuf.bytes_);
+        nw = nr < 0 ? -errno : static_cast<int>(nr);
     } else if (rbuf.bytes_ == 0 && _tls_ring_ctx) {
         // Transport EOF on a TLS session. A FIN without a prior close_notify
         // is a truncated TLS stream; report an error instead of a clean EOF

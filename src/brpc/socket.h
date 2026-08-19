@@ -699,6 +699,15 @@ friend void DereferenceSocket(Socket*);
     // bytes on success, 0 on EOF, -1 otherwise and errno is set
     ssize_t DoRead(size_t size_hint);
 
+#ifdef IO_URING_ENABLED
+    // Ring-mode counterpart of DoRead(): same structure and return
+    // contract, but consumes `len' bytes delivered by the ring instead of
+    // pulling from the fd (errno is EAGAIN when the bytes were consumed
+    // but produced no plaintext yet). Takes `_tls_ring_mutex' internally
+    // for non-plain connections.
+    ssize_t DoRingRead(const char* data, size_t len);
+#endif
+
     // Based upon whether the underlying channel is using SSL, write
     // `req' using the corresponding method. Returns written bytes on
     // success, -1 otherwise and errno is set
@@ -718,9 +727,6 @@ friend void DereferenceSocket(Socket*);
     // Feeds ciphertext, continues the handshake if needed, then decrypts
     // application data into `_read_buf'.
     ssize_t ProcessTlsRingData(const char* data, size_t len);
-    // Entry point of the ring read path for sockets that may use TLS.
-    // Takes `_tls_ring_mutex' internally.
-    ssize_t HandleTlsRingRead(const char* data, size_t len);
 #endif
 
     // Called before returning to pool.
