@@ -763,8 +763,8 @@ ssize_t Socket::ConsumeTlsPlaintext() {
                 continue;
             }
             // WANT_READ: everything available was decrypted. ZERO_RETURN:
-            // data followed by close_notify — deliver the data; the
-            // shutdown surfaces on the next read event or the TCP EOF.
+            // data followed by close_notify — deliver the data first;
+            // CopyDataRead queues a synthetic EOF event for the shutdown.
             break;
         }
         if (ssl_err == SSL_ERROR_WANT_READ) {
@@ -3907,6 +3907,18 @@ int Socket::CopyDataRead() {
         const char *buf_head = cur_group->GetRingReadBuf(rbuf.buf_id_);
         const ssize_t nr = DoRingRead(buf_head, rbuf.bytes_);
         nw = nr < 0 ? -errno : static_cast<int>(nr);
+        if (nw > 0 && _tls_ring_ctx) {
+            // close_notify may have arrived in the same buffer as the final
+            // plaintext (TLS half-close). Queue a synthetic EOF event so the
+            // shutdown is delivered after the data is processed: if the peer
+            // holds the TCP connection open, no further CQE would arrive to
+            // surface it. Idempotent with a later real FIN (SetEOF runs once).
+            BAIDU_SCOPED_LOCK(_tls_ring_mutex);
+            if (_ssl_session != NULL &&
+                (SSL_get_shutdown(_ssl_session) & SSL_RECEIVED_SHUTDOWN)) {
+                in_bufs_.emplace_back(0, UINT16_MAX, false);
+            }
+        }
     } else if (rbuf.bytes_ == 0 && _tls_ring_ctx) {
         // Transport EOF on a TLS session. A FIN without a prior close_notify
         // is a truncated TLS stream; report an error instead of a clean EOF
