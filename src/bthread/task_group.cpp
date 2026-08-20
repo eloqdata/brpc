@@ -1292,6 +1292,10 @@ void print_task(std::ostream& os, bthread_t tid) {
 }
 
 void TaskGroup::Notify() {
+    // Order the caller's push ahead of the flag reads below, so that a worker
+    // heading into Wait() and this producer cannot miss each other. See the
+    // fence in Wait()'s has_work() for the full argument.
+    std::atomic_thread_fence(std::memory_order_seq_cst);
     if (_waiting.load(std::memory_order_relaxed)) {
         bool expect = false;
         // Only one caller gets the right to notify the worker.
@@ -1323,8 +1327,14 @@ bool TaskGroup::NotifyIfWaiting() {
             std::unique_lock<std::mutex> lk(_mux);
             _notified.store(true, std::memory_order_release);
             _cv.notify_one();
+            return true;
         }
-        return true;
+        // This group already has a wakeup pending: its next has_work() scan
+        // claims exactly ONE task, so it must not absorb this signal too —
+        // one wakeup per signal, or a task is stranded when the claimed one
+        // blocks its worker (e.g. a BTHREAD_ATTR_PTHREAD bthread joining).
+        // Report failure so signal_task() walks on and wakes another group.
+        return false;
     }
     return false;
 }
@@ -1336,6 +1346,18 @@ bool TaskGroup::Wait(){
     const auto has_work = [this]()->bool {
         // Clear the _notified status every time the worker wakes up.
         _notified.store(false, std::memory_order_release);
+        // Publish _waiting=true and the _notified clear above before reading
+        // the run queues below. A producer decides whether to wake this group
+        // by reading those two flags right after pushing its task, so if this
+        // scan were reordered ahead of them both sides can miss each other:
+        // the producer sees a group that is not waiting, or one whose wakeup
+        // is already pending, and declines to arm anything, while this scan
+        // does not yet see the pushed task and the worker sleeps on it
+        // forever. Release stores do not order a later load, so this needs a
+        // full StoreLoad barrier. x86 gets one for free from the lock-prefixed
+        // instructions its atomic RMWs must use anyway; AArch64 does not.
+        // Pairs with the fences in Notify() and TaskControl::signal_task().
+        std::atomic_thread_fence(std::memory_order_seq_cst);
         // No need to check _rq since _rq can only be pushed by itself.
         if (!_remote_rq.empty() || !_bound_rq.empty()) {
             return true;
@@ -1380,6 +1402,20 @@ bool TaskGroup::Wait(){
 #endif
     {
         std::unique_lock<std::mutex> lk(_mux);
+        // has_work() reads _remote_rq/_bound_rq through moodycamel's observers,
+        // which are explicitly best-effort ("the queue is likely but not
+        // guaranteed to be empty"), so an indefinite wait here is safe only
+        // because every runnable task gets a scan that is ordered after its
+        // push:
+        // 1. One wakeup per signal. NotifyIfWaiting() reports success only when
+        //    it actually arms a wakeup, and a wakeup claims exactly one task,
+        //    so signal_task() keeps walking until every task it owes has a
+        //    distinct scan scheduled somewhere.
+        // 2. That scan observes the push, because the StoreLoad fences above
+        //    and in the producers order each push ahead of the flag reads that
+        //    decide whether to wake anyone. A best-effort miss can therefore
+        //    only concern a push that is still in flight, and that push
+        //    carries its own signal.
         _cv.wait(lk, has_work);
     }
     _waiting.store(false, std::memory_order_release);
