@@ -132,6 +132,7 @@ ServerOptions::ServerOptions()
     , server_owns_interceptor(false)
     , num_threads(8)
     , max_concurrency(0)
+    , redis_max_connections(0)
     , session_local_data_factory(NULL)
     , reserved_session_local_data(0)
     , thread_local_data_factory(NULL)
@@ -573,6 +574,19 @@ bool is_http_protocol(const char* name) {
     return strcmp(name, "http") == 0 || strcmp(name, "h2") == 0;
 }
 
+bool is_redis_only_public_listener(const ServerOptions& opt,
+                                   size_t user_service_count) {
+    return opt.redis_service != NULL &&
+           opt.enabled_protocols == "redis" &&
+           !opt.has_builtin_services &&
+           user_service_count == 0 &&
+           opt.nshead_service == NULL &&
+           opt.thrift_service == NULL &&
+           opt.mongo_service_adaptor == NULL &&
+           opt.http_master_service == NULL &&
+           opt.rtmp_service == NULL;
+}
+
 Acceptor* Server::BuildAcceptor() {
     std::set<std::string> whitelist;
     for (butil::StringSplitter sp(_options.enabled_protocols.c_str(), ' ');
@@ -589,9 +603,17 @@ Acceptor* Server::BuildAcceptor() {
     InputMessageHandler handler;
     std::vector<Protocol> protocols;
     ListProtocols(&protocols);
+    const bool redis_only =
+        is_redis_only_public_listener(_options, service_count());
     for (size_t i = 0; i < protocols.size(); ++i) {
         if (protocols[i].process_request == NULL) {
             // The protocol does not support server-side.
+            continue;
+        }
+        if (redis_only && strcmp(protocols[i].name, "redis") != 0) {
+            // This dedicated listener may enable its connection limit at
+            // runtime. Install no RPC or HTTP parser that could make pre-TLS
+            // admission affect a shared interface.
             continue;
         }
         if (has_whitelist &&
@@ -770,6 +792,20 @@ int Server::StartInternal(const butil::EndPoint& endpoint,
             LOG(ERROR) << "Can't start Server[" << version()
                        << "] which is " << status_str(status());
         }
+        return -1;
+    }
+
+    const ServerOptions default_opt;
+    const ServerOptions& real_opt = opt ? *opt : default_opt;
+    // Admission happens before protocol parsing (and, importantly, before a
+    // TLS handshake), so it is only safe on a listener dedicated to Redis.
+    // Reject ambiguous configurations instead of accidentally limiting RPCs
+    // sharing the public port.
+    if (real_opt.redis_max_connections != 0 &&
+        !is_redis_only_public_listener(real_opt, service_count())) {
+        LOG(ERROR) << "redis_max_connections requires a Redis-only public "
+                      "listener (redis_service set, enabled_protocols=redis, "
+                      "no RPC or builtin services)";
         return -1;
     }
     if (opt) {
@@ -1053,7 +1089,8 @@ int Server::StartInternal(const butil::EndPoint& endpoint,
         // Pass ownership of `sockfd' to `_am'
         if (_am->StartAccept(sockfd, _options.idle_timeout_sec,
                              _default_ssl_ctx,
-                             _options.force_ssl) != 0) {
+                             _options.force_ssl,
+                             _options.redis_max_connections) != 0) {
             LOG(ERROR) << "Fail to start acceptor";
             return -1;
         }
@@ -1094,7 +1131,8 @@ int Server::StartInternal(const butil::EndPoint& endpoint,
         // Pass ownership of `sockfd' to `_internal_am'
         if (_internal_am->StartAccept(sockfd, _options.idle_timeout_sec,
                                       _default_ssl_ctx,
-                                      false) != 0) {
+                                      false,
+                                      0) != 0) {
             LOG(ERROR) << "Fail to start internal_acceptor";
             return -1;
         }
@@ -1665,14 +1703,32 @@ google::protobuf::Service* Server::FindServiceByName(
 
 void Server::GetStat(ServerStatistics* stat) const {
     stat->connection_count = 0;
+    stat->rejected_redis_connection_count = 0;
     if (_am) {
         stat->connection_count += _am->ConnectionCount();
+        stat->rejected_redis_connection_count +=
+            _am->RejectedRedisConnectionCount();
     }
     if (_internal_am) {
         stat->connection_count += _internal_am->ConnectionCount();
     }
     stat->user_service_count = service_count();
     stat->builtin_service_count = builtin_service_count();
+}
+
+int Server::SetRedisMaxConnections(size_t max_connections) {
+    if (!IsRunning() || _am == NULL) {
+        LOG(WARNING) << "SetRedisMaxConnections is only allowed for a "
+                        "running Server";
+        return -1;
+    }
+    if (!is_redis_only_public_listener(_options, service_count())) {
+        LOG(WARNING) << "SetRedisMaxConnections requires a Redis-only public "
+                        "listener";
+        return -1;
+    }
+    _am->SetRedisMaxConnections(max_connections);
+    return 0;
 }
 
 void Server::ListServices(std::vector<google::protobuf::Service*> *services) {
