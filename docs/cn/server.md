@@ -384,6 +384,8 @@ Server.set_version(...)可以为server设置一个名称+版本，可通过/vers
 
 Acceptor会在创建brpc Socket前预留连接名额，因此空闲连接也计入上限，并发accept不会突破限制。超过限制的明文连接会收到`-ERR max number of clients reached`；启用SSL的监听端口会在TLS握手前直接关闭连接。内部监听端口和其他Server实例不受影响。`ServerStatistics.rejected_redis_connection_count`记录累计拒绝的连接数。
 
+运行中的Redis专用Server可以调用`Server::SetRedisMaxConnections()`原子更新上限。调低上限不会关闭已有连接；在当前连接数降到新上限以下之前，新连接会被拒绝。调高上限会在后续连接准入检查中生效，设置为0表示取消限制。以不限制值启动的Redis专用Server也可以通过该接口启用限制。
+
 ## pid_file
 
 如果设置了此字段，Server启动时会创建一个同名文件，内容为进程号。默认为空。

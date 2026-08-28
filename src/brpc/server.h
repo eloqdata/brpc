@@ -133,6 +133,7 @@ struct ServerOptions {
     // enabled_protocols is exactly "redis", no protobuf/RPC services are
     // registered, and builtin services are disabled. The internal listener
     // and other Server instances are never subject to this limit.
+    // Use Server::SetRedisMaxConnections() to update it while running.
     // Default: 0 (unlimited)
     size_t redis_max_connections;
 
@@ -510,6 +511,13 @@ public:
 
     // Get statistics of this server
     void GetStat(ServerStatistics* stat) const;
+
+    // Atomically update the connection limit of a running Redis-only public
+    // listener. Existing connections are not closed when lowering the limit;
+    // new connections are rejected until the count falls below it. A value of
+    // 0 disables the limit. Returns 0 on success, -1 if the Server is not
+    // running or its public listener is not dedicated to Redis.
+    int SetRedisMaxConnections(size_t max_connections);
 
     // Get the options passed to Start().
     const ServerOptions& options() const { return _options; }

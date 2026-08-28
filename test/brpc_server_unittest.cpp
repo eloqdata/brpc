@@ -1288,10 +1288,11 @@ TEST_F(ServerTest, reject_redis_connections_over_limit) {
     brpc::Server server;
     brpc::ServerOptions opt;
     opt.redis_service = new ConnectionLimitRedisService;
-    opt.redis_max_connections = 1;
+    opt.redis_max_connections = 0;
     opt.enabled_protocols = "redis";
     opt.has_builtin_services = false;
     ASSERT_EQ(0, server.Start("127.0.0.1:0", &opt));
+    ASSERT_EQ(0, server.SetRedisMaxConnections(1));
 
     const butil::EndPoint ep = server.listen_address();
     butil::fd_guard first_client(tcp_connect(ep, NULL));
@@ -1314,6 +1315,7 @@ TEST_F(ServerTest, reject_redis_connections_over_limit) {
     ASSERT_EQ(0, rpc_server.AddService(
         &rpc_service, brpc::SERVER_DOESNT_OWN_SERVICE));
     ASSERT_EQ(0, rpc_server.Start("127.0.0.1:0", NULL));
+    EXPECT_EQ(-1, rpc_server.SetRedisMaxConnections(1));
     SendSleepRPC(rpc_server.listen_address(), 0, true);
 
     butil::fd_guard rejected_client(tcp_connect(ep, NULL));
@@ -1331,7 +1333,40 @@ TEST_F(ServerTest, reject_redis_connections_over_limit) {
     EXPECT_EQ(1ul, stat.connection_count);
     EXPECT_EQ(1ul, stat.rejected_redis_connection_count);
 
+    ASSERT_EQ(0, server.SetRedisMaxConnections(2));
+    butil::fd_guard second_client(tcp_connect(ep, NULL));
+    ASSERT_GT(second_client, 0);
+    for (int retry = 0; retry < 100; ++retry) {
+        server.GetStat(&stat);
+        if (stat.connection_count == 2) {
+            break;
+        }
+        usleep(1000);
+    }
+    ASSERT_EQ(2ul, stat.connection_count);
+
+    // Lowering the limit does not close either existing connection, but it
+    // immediately prevents another connection from being admitted.
+    ASSERT_EQ(0, server.SetRedisMaxConnections(1));
+    server.GetStat(&stat);
+    EXPECT_EQ(2ul, stat.connection_count);
+    butil::fd_guard lowered_rejected_client(tcp_connect(ep, NULL));
+    ASSERT_GT(lowered_rejected_client, 0);
+    ASSERT_EQ(0, setsockopt(lowered_rejected_client, SOL_SOCKET, SO_RCVTIMEO,
+                           &timeout, sizeof(timeout)));
+    char lowered_response[64];
+    const ssize_t lowered_nr = recv(lowered_rejected_client,
+                                    lowered_response,
+                                    sizeof(lowered_response),
+                                    0);
+    ASSERT_EQ(expected.size(), (size_t)lowered_nr);
+    EXPECT_EQ(expected, std::string(lowered_response, (size_t)lowered_nr));
+    server.GetStat(&stat);
+    EXPECT_EQ(2ul, stat.connection_count);
+    EXPECT_EQ(2ul, stat.rejected_redis_connection_count);
+
     first_client.reset(-1);
+    second_client.reset(-1);
     for (int retry = 0; retry < 100; ++retry) {
         server.GetStat(&stat);
         if (stat.connection_count == 0) {
