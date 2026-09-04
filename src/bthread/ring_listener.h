@@ -258,6 +258,11 @@ private:
 
     void HandleBacklog();
 
+    // Clears the fixed-file slots of unregistered sockets (dropping the
+    // fixed-file table's kernel reference to them) and recycles each slot
+    // once its clear succeeds. Run from ExtPoll() on the ring owner thread.
+    void ClearPendingFileSlots();
+
     bool SubmitBacklog(brpc::Socket *sock, uint64_t data);
 
     void RecycleReturnedWriteBufs();
@@ -290,6 +295,10 @@ private:
     };
 
     std::vector<uint16_t> free_reg_fd_idx_;
+    // Fixed-file slots of unregistered sockets awaiting a clear; they still
+    // hold a kernel reference to the closed socket and are moved to
+    // free_reg_fd_idx_ only once io_uring_register_files_update succeeds.
+    std::vector<uint16_t> pending_clear_fd_idx_;
 
     std::unique_ptr<RingWriteBufferPool> write_buf_pool_;
     moodycamel::ConcurrentQueue<uint16_t> write_bufs_;

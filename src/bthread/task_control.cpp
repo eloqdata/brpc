@@ -441,6 +441,12 @@ void TaskControl::signal_task(int num_task) {
         return;
     }
 
+    // Order the caller's push ahead of every waiting-state read below,
+    // including the per-group _waiting reads in NotifyIfWaiting() further
+    // down, so that a worker heading into Wait() and this producer cannot miss
+    // each other. One fence here covers the whole walk. See the fence in
+    // TaskGroup::Wait()'s has_work() for the full argument.
+    std::atomic_thread_fence(std::memory_order_seq_cst);
     int waiting_worker = TaskGroup::_waiting_workers.load(std::memory_order_relaxed);
     if (waiting_worker == 0) {
         if (FLAGS_bthread_min_concurrency > 0 &&
